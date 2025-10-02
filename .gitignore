@@ -1,0 +1,46 @@
+# General
+.DS_Store
+*.log
+*.tmp
+
+# Build artifacts
+**/build/**
+**/bin/**
+**/lib/**
+**/obj/**
+**/out/**
+**/dist/**
+*.o
+*.a
+*.so
+*.dylib
+*.exe
+
+# Autotools / configure
+**/configure
+**/config.log
+**/config.status
+**/autom4te.cache/**
+**/aclocal.m4
+**/Makefile.in
+**/Makefile
+
+# Python helpers
+__pycache__/
+*.pyc
+.venv/
+
+# R
+.Rhistory
+.Rproj.user/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Data & results (optional)
+results/
+**/*.csv
+**/*.tsv
+**/*.dat
