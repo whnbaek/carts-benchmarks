@@ -1,0 +1,24 @@
+# CARTS Makefile for KASTORS SparseLU
+
+CFLAGS = -fopenmp -O0 -DMSIZE=1 -DSMSIZE=1
+INCLUDES = -Iinclude -I.. -I../common
+
+SRCS = \
+  src/sparselu.c \
+  src/sparselu-task.c \
+  src/sparselu-task-dep.c \
+  src/sparselu-seq.c \
+  main_sparselu.c
+
+all: $(SRCS:.c=_arts.mlir)
+
+%.mlir: %.c
+	carts cgeist $< $(CFLAGS) $(INCLUDES) -S > $@
+
+%_arts.mlir: %.mlir
+	carts run $< --convert-openmp --debug-only=convert_openmp_to_arts > $@
+
+clean:
+	rm -f src/*.mlir *.mlir
+
+.PHONY: all clean

@@ -1,0 +1,45 @@
+# CARTS Makefile for Reduce example
+
+# Default macro values from ParRes Kernels
+RESTRICT_KEYWORD ?= 0
+MAXTHREADS ?= 512
+VERBOSE ?= 0
+
+# Compiler flags with macros
+CFLAGS = -fopenmp -O0 -DRESTRICT_KEYWORD=$(RESTRICT_KEYWORD) -DMAXTHREADS=$(MAXTHREADS) -DVERBOSE=$(VERBOSE)
+INCLUDES = -I..
+
+# Source files
+SRC = reduce.c
+OBJ = reduce.o
+
+# Targets
+all: mlir arts
+
+mlir: reduce.mlir
+
+arts: reduce_arts.mlir
+
+reduce.mlir: $(SRC)
+	carts cgeist $(SRC) $(CFLAGS) $(INCLUDES) -S > reduce.mlir
+
+reduce_arts.mlir: reduce.mlir
+	carts run reduce.mlir --convert-openmp --debug-only=convert_openmp_to_arts > reduce_arts.mlir
+
+clean:
+	rm -f *.mlir *.o
+
+help:
+	@echo "CARTS Makefile for Reduce"
+	@echo "Usage:"
+	@echo "  make mlir          - Generate MLIR from C source"
+	@echo "  make arts          - Convert MLIR to ARTS dialect"
+	@echo "  make all           - Generate both MLIR and ARTS"
+	@echo "  make clean         - Clean generated files"
+	@echo ""
+	@echo "Macro options (set with VARIABLE=value):"
+	@echo "  RESTRICT_KEYWORD=0 - Enable restrict keyword (0/1)"
+	@echo "  MAXTHREADS=512     - Maximum OpenMP threads"
+	@echo "  VERBOSE=0          - Verbose output (0/1)"
+
+.PHONY: all mlir arts clean help

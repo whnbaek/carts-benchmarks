@@ -1,0 +1,23 @@
+# CARTS Makefile for Synch_global example
+
+CFLAGS = -fopenmp -O0
+INCLUDES = -I..
+
+SRC = global.c
+
+all: mlir arts
+
+mlir: global.mlir
+
+arts: global_arts.mlir
+
+global.mlir: $(SRC)
+	carts cgeist $(SRC) $(CFLAGS) $(INCLUDES) -S > global.mlir
+
+global_arts.mlir: global.mlir
+	carts run global.mlir --convert-openmp --debug-only=convert_openmp_to_arts > global_arts.mlir
+
+clean:
+	rm -f *.mlir *.o
+
+.PHONY: all mlir arts clean

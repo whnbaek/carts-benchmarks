@@ -1,0 +1,28 @@
+# CARTS Makefile for KASTORS Jacobi
+
+CFLAGS = -fopenmp -O0
+INCLUDES = -Iinclude -I..
+
+SRCS = \
+  src/jacobi-for.c \
+  src/jacobi-task.c \
+  src/jacobi-task-dep.c \
+  src/jacobi-block.c \
+  src/jacobi-block-for.c \
+  src/jacobi-block-task.c \
+  src/jacobi-block-task-dep.c \
+  src/poisson-for.c \
+  src/poisson-task.c
+
+all: $(SRCS:.c=_arts.mlir)
+
+%.mlir: %.c
+	carts cgeist $< $(CFLAGS) $(INCLUDES) -S > $@
+
+%_arts.mlir: %.mlir
+	carts run $< --convert-openmp --debug-only=convert_openmp_to_arts > $@
+
+clean:
+	rm -f src/*.mlir
+
+.PHONY: all clean

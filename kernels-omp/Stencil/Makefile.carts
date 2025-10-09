@@ -1,0 +1,55 @@
+# CARTS Makefile for Stencil example
+
+# Default macro values from ParRes Kernels
+RADIUS ?= 2
+DOUBLE ?= 1
+PARALLELFOR ?= 0
+STAR ?= 1
+RESTRICT_KEYWORD ?= 0
+LOOPGEN ?= 0
+MAXTHREADS ?= 512
+VERBOSE ?= 0
+
+# Compiler flags with macros
+CFLAGS = -fopenmp -O0 -DRADIUS=$(RADIUS) -DDOUBLE=$(DOUBLE) -DPARALLELFOR=$(PARALLELFOR) -DSTAR=$(STAR) -DRESTRICT_KEYWORD=$(RESTRICT_KEYWORD) -DLOOPGEN=$(LOOPGEN) -DMAXTHREADS=$(MAXTHREADS) -DVERBOSE=$(VERBOSE)
+INCLUDES = -I..
+
+# Source files
+SRC = stencil.c
+OBJ = stencil.o
+
+# Targets
+all: mlir arts
+
+mlir: stencil.mlir
+
+arts: stencil_arts.mlir
+
+stencil.mlir: $(SRC)
+	carts cgeist $(SRC) $(CFLAGS) $(INCLUDES) -S > stencil.mlir
+
+stencil_arts.mlir: stencil.mlir
+	carts run stencil.mlir --convert-openmp --debug-only=convert_openmp_to_arts > stencil_arts.mlir
+
+clean:
+	rm -f *.mlir *.o
+
+help:
+	@echo "CARTS Makefile for Stencil"
+	@echo "Usage:"
+	@echo "  make mlir          - Generate MLIR from C source"
+	@echo "  make arts          - Convert MLIR to ARTS dialect"
+	@echo "  make all           - Generate both MLIR and ARTS"
+	@echo "  make clean         - Clean generated files"
+	@echo ""
+	@echo "Macro options (set with VARIABLE=value):"
+	@echo "  RADIUS=2           - Radius of stencil filter"
+	@echo "  DOUBLE=1           - Use double precision (1) or single (0)"
+	@echo "  PARALLELFOR=0      - Fused (0) or split (1) parallel regions"
+	@echo "  STAR=1             - Star-shaped (1) or box (0) stencil"
+	@echo "  RESTRICT_KEYWORD=0 - Enable restrict keyword (0/1)"
+	@echo "  LOOPGEN=0          - Compact (0) or expanded (1) loop body"
+	@echo "  MAXTHREADS=512     - Maximum OpenMP threads"
+	@echo "  VERBOSE=0          - Verbose output (0/1)"
+
+.PHONY: all mlir arts clean help

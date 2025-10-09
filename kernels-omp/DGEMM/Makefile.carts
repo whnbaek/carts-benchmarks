@@ -1,0 +1,51 @@
+# CARTS Makefile for DGEMM example
+
+# Default macro values from ParRes Kernels
+DEFAULTBLOCK ?= 32
+BOFFSET ?= 12
+MAXTHREADS ?= 512
+VERBOSE ?= 0
+RESTRICT_KEYWORD ?= 0
+MKL ?= 0
+
+# Compiler flags with macros
+CFLAGS = -fopenmp -O0 -DDEFAULTBLOCK=$(DEFAULTBLOCK) -DBOFFSET=$(BOFFSET) -DMAXTHREADS=$(MAXTHREADS) -DVERBOSE=$(VERBOSE) -DRESTRICT_KEYWORD=$(RESTRICT_KEYWORD) -DMKL=$(MKL)
+INCLUDES = -I..
+
+# Source files
+SRC = dgemm.c
+OBJ = dgemm.o
+
+# Targets
+all: mlir arts
+
+mlir: dgemm.mlir
+
+arts: dgemm_arts.mlir
+
+dgemm.mlir: $(SRC)
+	carts cgeist $(SRC) $(CFLAGS) $(INCLUDES) -S > dgemm.mlir
+
+dgemm_arts.mlir: dgemm.mlir
+	carts run dgemm.mlir --convert-openmp --debug-only=convert_openmp_to_arts > dgemm_arts.mlir
+
+clean:
+	rm -f *.mlir *.o
+
+help:
+	@echo "CARTS Makefile for DGEMM"
+	@echo "Usage:"
+	@echo "  make mlir          - Generate MLIR from C source"
+	@echo "  make arts          - Convert MLIR to ARTS dialect"
+	@echo "  make all           - Generate both MLIR and ARTS"
+	@echo "  make clean         - Clean generated files"
+	@echo ""
+	@echo "Macro options (set with VARIABLE=value):"
+	@echo "  DEFAULTBLOCK=32    - Tile size (non-MKL version)"
+	@echo "  BOFFSET=12         - Array dimension padding"
+	@echo "  MAXTHREADS=512     - Maximum OpenMP threads"
+	@echo "  VERBOSE=0          - Verbose output (0/1)"
+	@echo "  RESTRICT_KEYWORD=0 - Enable restrict keyword (0/1)"
+	@echo "  MKL=0              - Enable MKL library (0/1)"
+
+.PHONY: all mlir arts clean help

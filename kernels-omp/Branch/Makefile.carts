@@ -1,0 +1,35 @@
+# CARTS Makefile for Branch example
+
+# Compiler flags
+CFLAGS = -fopenmp -O0
+INCLUDES = -I..
+
+# Source files
+SRC = branch.c
+OBJ = branch.o
+
+# Targets
+all: mlir arts
+
+mlir: branch.mlir
+
+arts: branch_arts.mlir
+
+branch.mlir: $(SRC)
+	carts cgeist $(SRC) $(CFLAGS) $(INCLUDES) -S > branch.mlir
+
+branch_arts.mlir: branch.mlir
+	carts run branch.mlir --convert-openmp --debug-only=convert_openmp_to_arts > branch_arts.mlir
+
+clean:
+	rm -f *.mlir *.o
+
+help:
+	@echo "CARTS Makefile for Branch"
+	@echo "Usage:"
+	@echo "  make mlir          - Generate MLIR from C source"
+	@echo "  make arts          - Convert MLIR to ARTS dialect"
+	@echo "  make all           - Generate both MLIR and ARTS"
+	@echo "  make clean         - Clean generated files"
+
+.PHONY: all mlir arts clean help

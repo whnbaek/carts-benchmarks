@@ -1,19 +1,12 @@
-/* CLASS = A */
-/*
-   This file is generated automatically by the setparams utility.
-   It sets the number of processors and the class of the NPB
-   in this directory. Do not modify it by hand.   
-*/
-#define CLASS  'A'
-#define M      28
+#ifndef NPBPARAMS_H
+#define NPBPARAMS_H
 
-#define CONVERTDOUBLE  false
-#define COMPILETIME "03 May 2021"
-#define NPBVERSION "3.3.1"
-#define CS1 "gcc"
-#define CS2 "$(CC)"
-#define CS3 "-lm"
-#define CS4 "-I../common"
-#define CS5 "-g -Wall -O3 -fopenmp -mcmodel=medium"
-#define CS6 "-O3 -fopenmp -mcmodel=medium"
-#define CS7 "randdp"
+#define CLASS 'S'
+#define MK 24
+#define MM (MK+1)
+#define NN (1<<MM)
+#define NK (1<<MK)
+#define NQ 10
+#define EPSILON 1.0e-8
+
+#endif /* NPBPARAMS_H */
