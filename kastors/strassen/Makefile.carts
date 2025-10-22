@@ -1,24 +1,26 @@
 # CARTS Makefile for KASTORS Strassen
 
-CFLAGS = -fopenmp -O0 -DMSIZE=1 -DCUTOFF_SIZE=1 -DCUTOFF_DEPTH=1
-INCLUDES = -Iinclude -I.. -I../common
+# Individual strassen variants in their own folders
+STRASSEN_VARIANTS = \
+  strassen \
+  strassen-seq \
+  strassen-task \
+  strassen-task-dep \
+  main-strassen
 
-SRCS = \
-  src/strassen.c \
-  src/strassen-task.c \
-  src/strassen-task-dep.c \
-  src/strassen-seq.c \
-  main_strassen.c
-
-all: $(SRCS:.c=_arts.mlir)
-
-%.mlir: %.c
-	carts cgeist $< $(CFLAGS) $(INCLUDES) -S > $@
-
-%_arts.mlir: %.mlir
-	carts run $< --convert-openmp --debug-only=convert_openmp_to_arts > $@
+all:
+	@for dir in $(STRASSEN_VARIANTS); do \
+		if [ -d "$$dir" ]; then \
+			echo "Building $$dir..."; \
+			$(MAKE) -C $$dir all; \
+		fi; \
+	done
 
 clean:
-	rm -f src/*.mlir *.mlir
+	@for dir in $(STRASSEN_VARIANTS); do \
+		if [ -d "$$dir" ]; then \
+			$(MAKE) -C $$dir clean; \
+		fi; \
+	done
 
 .PHONY: all clean

@@ -1,28 +1,47 @@
 # CARTS Makefile for KASTORS Jacobi
 
-CFLAGS = -fopenmp -O0
-INCLUDES = -Iinclude -I..
+# Individual jacobi variants in their own folders
+JACOBI_VARIANTS = \
+  jacobi-block-for \
+  jacobi-block-task \
+  jacobi-block-task-dep \
+  jacobi-block \
+  jacobi-for \
+  jacobi-seq \
+  jacobi-task-dep \
+  jacobi-task \
+  poisson-for \
+  poisson-task
 
-SRCS = \
-  src/jacobi-for.c \
-  src/jacobi-task.c \
-  src/jacobi-task-dep.c \
-  src/jacobi-block.c \
-  src/jacobi-block-for.c \
-  src/jacobi-block-task.c \
-  src/jacobi-block-task-dep.c \
-  src/poisson-for.c \
-  src/poisson-task.c
+# Self-contained versions
+SELF_CONTAINED = \
+  jacobi-task.c \
+  jacobi-for.c
 
-all: $(SRCS:.c=_arts.mlir)
+all: self-contained-variants individual-variants
+
+self-contained-variants: $(SELF_CONTAINED:.c=_arts.mlir)
+
+individual-variants:
+	@for dir in $(JACOBI_VARIANTS); do \
+		if [ -d "$$dir" ]; then \
+			echo "Building $$dir..."; \
+			$(MAKE) -C $$dir all; \
+		fi; \
+	done
 
 %.mlir: %.c
-	carts cgeist $< $(CFLAGS) $(INCLUDES) -S > $@
+	carts cgeist $< -fopenmp -O0 -Iinclude -I.. -S > $@
 
 %_arts.mlir: %.mlir
-	carts run $< --convert-openmp --debug-only=convert_openmp_to_arts > $@
+	carts run $< --openmp-to-arts --debug-only=convert_openmp_to_arts > $@
 
 clean:
-	rm -f src/*.mlir
+	rm -f *.mlir
+	@for dir in $(JACOBI_VARIANTS); do \
+		if [ -d "$$dir" ]; then \
+			$(MAKE) -C $$dir clean; \
+		fi; \
+	done
 
-.PHONY: all clean
+.PHONY: all clean self-contained-variants individual-variants

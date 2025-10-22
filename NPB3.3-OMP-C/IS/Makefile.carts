@@ -11,7 +11,7 @@ all: $(SRCS:.c=_arts.mlir)
 	carts cgeist $< $(CFLAGS) $(INCLUDES) -S > $@
 
 %_arts.mlir: %.mlir
-	carts run $< --convert-openmp --debug-only=convert_openmp_to_arts > $@
+	carts run $< --openmp-to-arts --debug-only=convert_openmp_to_arts > $@
 
 clean:
 	rm -f *.mlir

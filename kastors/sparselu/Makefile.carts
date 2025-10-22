@@ -1,24 +1,26 @@
 # CARTS Makefile for KASTORS SparseLU
 
-CFLAGS = -fopenmp -O0 -DMSIZE=1 -DSMSIZE=1
-INCLUDES = -Iinclude -I.. -I../common
+# Individual sparselu variants in their own folders
+SPARSELU_VARIANTS = \
+  sparselu \
+  sparselu-seq \
+  sparselu-task \
+  sparselu-task-dep \
+  main-sparselu
 
-SRCS = \
-  src/sparselu.c \
-  src/sparselu-task.c \
-  src/sparselu-task-dep.c \
-  src/sparselu-seq.c \
-  main_sparselu.c
-
-all: $(SRCS:.c=_arts.mlir)
-
-%.mlir: %.c
-	carts cgeist $< $(CFLAGS) $(INCLUDES) -S > $@
-
-%_arts.mlir: %.mlir
-	carts run $< --convert-openmp --debug-only=convert_openmp_to_arts > $@
+all:
+	@for dir in $(SPARSELU_VARIANTS); do \
+		if [ -d "$$dir" ]; then \
+			echo "Building $$dir..."; \
+			$(MAKE) -C $$dir all; \
+		fi; \
+	done
 
 clean:
-	rm -f src/*.mlir *.mlir
+	@for dir in $(SPARSELU_VARIANTS); do \
+		if [ -d "$$dir" ]; then \
+			$(MAKE) -C $$dir clean; \
+		fi; \
+	done
 
 .PHONY: all clean

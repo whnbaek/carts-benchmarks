@@ -1,0 +1,25 @@
+# CARTS Makefile for Task Parallelism OMP
+
+# Individual task-parallelism variants in their own folders
+TASK_PARALLELISM_VARIANTS = \
+  merge-serial \
+  merge-tasks \
+  quick-tasks \
+  get-time
+
+all:
+	@for dir in $(TASK_PARALLELISM_VARIANTS); do \
+		if [ -d "$$dir" ]; then \
+			echo "Building $$dir..."; \
+			$(MAKE) -C $$dir all; \
+		fi; \
+	done
+
+clean:
+	@for dir in $(TASK_PARALLELISM_VARIANTS); do \
+		if [ -d "$$dir" ]; then \
+			$(MAKE) -C $$dir clean; \
+		fi; \
+	done
+
+.PHONY: all clean
