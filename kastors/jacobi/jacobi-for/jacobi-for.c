@@ -10,13 +10,11 @@ void sweep(int nx, int ny, double dx, double dy, double *f_, int itold,
   double (*u)[nx][ny] = (double (*)[nx][ny])u_;
   double (*unew)[nx][ny] = (double (*)[nx][ny])unew_;
 
-#pragma omp parallel shared(f, u, unew) private(i, j, it)                      \
-    firstprivate(nx, ny, dx, dy, itold, itnew)
   for (it = itold + 1; it <= itnew; it++) {
     /*
        Save the current estimate.
        */
-#pragma omp for
+#pragma omp parallel for private(j)
     for (i = 0; i < nx; i++) {
       for (j = 0; j < ny; j++) {
         (*u)[i][j] = (*unew)[i][j];
@@ -25,7 +23,7 @@ void sweep(int nx, int ny, double dx, double dy, double *f_, int itold,
     /*
        Compute a new estimate.
        */
-#pragma omp for
+#pragma omp parallel for private(j)
     for (i = 0; i < nx; i++) {
       for (j = 0; j < ny; j++) {
         if (i == 0 || j == 0 || i == nx - 1 || j == ny - 1) {

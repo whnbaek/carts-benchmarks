@@ -1,0 +1,16 @@
+NAME=gemm
+
+all: $(NAME)_arts.mlir
+
+$(NAME).mlir: $(NAME).c
+	carts cgeist $(NAME).c -fopenmp -O0 -S > $(NAME).mlir
+
+$(NAME)_arts.mlir: $(NAME).mlir
+	carts run $(NAME).mlir --openmp-to-arts --edt-transforms --epochs --arts-to-llvm --debug-only=convert_openmp_to_arts > $(NAME)_arts.mlir
+
+clean:
+	rm -f $(NAME).mlir $(NAME)_arts.mlir
+
+.PHONY: all clean
+
+

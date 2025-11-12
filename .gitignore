@@ -16,6 +16,15 @@
 *.dylib
 *.exe
 
+# Generated MLIR files
+*.mlir
+*.ll
+
+# Stages output directories from dump-carts-stages.sh
+stages/
+*/stages/
+**/stages/
+
 # Autotools / configure
 **/configure
 **/config.log
