@@ -24,9 +24,56 @@ B[i][j][k] = Σ(l=-1 to 1) Σ(m=-1 to 1) Σ(n=-1 to 1)
 
 ## Problem Sizes
 
-- **MINI**: 32×32×32
-- **SMALL**: 64×64×64
-- **STANDARD**: 256×256×256
+| Size | Dimensions | Description |
+|------|------------|-------------|
+| **MINI** | 32×32×32 | Minimal size for quick testing |
+| **SMALL** | 64×64×64 | Small problem size |
+| **MEDIUM** | 256×256×256 | Standard problem size (default) |
+| **LARGE** | 512×512×512 | Large problem size |
+| **EXTRALARGE** | 1024×1024×1024 | Extra large problem size |
+
+## Building and Running
+
+### Build with CARTS pipeline
+
+```bash
+# Build small size (128×128)
+make small
+
+# Build medium size (1024×1024) - default
+make medium
+
+# Build large size (2000×2000)
+make large
+
+# Build all pipeline stages (seq, metadata, parallel, concurrency)
+make all
+```
+
+### Build individual stages
+
+```bash
+# Generate sequential MLIR
+make seq
+
+# Collect runtime metadata
+make metadata
+
+# Generate parallel MLIR
+make parallel
+
+# Run concurrency analysis
+make concurrency
+
+# Run optimized concurrency analysis
+make concurrency-opt
+```
+
+### Clean build artifacts
+
+```bash
+make clean
+```
 
 ## Use in Machine Learning
 

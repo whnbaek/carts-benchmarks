@@ -63,16 +63,13 @@ void kernel_seidel_2d(int tsteps,
   #pragma scop
   #pragma omp parallel private (t,i,j)
   {
-    #pragma omp master
-    {
-      for (t = 0; t <= _PB_TSTEPS - 1; t++) {
-        #pragma omp for schedule(static) collapse (2)
-        for (i = 1; i<= _PB_N - 2; i++) {
-          for (j = 1; j <= _PB_N - 2; j++) {
-            A[i][j] = (A[i-1][j-1] + A[i-1][j] + A[i-1][j+1]
-                       + A[i][j-1] + A[i][j] + A[i][j+1]
-                       + A[i+1][j-1] + A[i+1][j] + A[i+1][j+1])/9.0;
-          }
+    for (t = 0; t <= _PB_TSTEPS - 1; t++) {
+      #pragma omp for schedule(static) collapse (2)
+      for (i = 1; i<= _PB_N - 2; i++) {
+        for (j = 1; j <= _PB_N - 2; j++) {
+          A[i][j] = (A[i-1][j-1] + A[i-1][j] + A[i-1][j+1]
+                     + A[i][j-1] + A[i][j] + A[i][j+1]
+                     + A[i+1][j-1] + A[i+1][j] + A[i+1][j+1])/9.0;
         }
       }
     }

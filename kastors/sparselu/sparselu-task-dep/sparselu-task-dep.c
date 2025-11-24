@@ -1,38 +1,166 @@
 /**********************************************************************************************/
-/*  This program is part of the Barcelona OpenMP Tasks Suite */
-/*  Copyright (C) 2009 Barcelona Supercomputing Center - Centro Nacional de
- * Supercomputacion  */
-/*  Copyright (C) 2009 Universitat Politecnica de Catalunya */
-/*                                                                                            */
-/*  This program is free software; you can redistribute it and/or modify */
-/*  it under the terms of the GNU General Public License as published by */
-/*  the Free Software Foundation; either version 2 of the License, or */
-/*  (at your option) any later version. */
-/*                                                                                            */
-/*  This program is distributed in the hope that it will be useful, */
-/*  but WITHOUT ANY WARRANTY; without even the implied warranty of */
-/*  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the */
-/*  GNU General Public License for more details. */
-/*                                                                                            */
-/*  You should have received a copy of the GNU General Public License */
-/*  along with this program; if not, write to the Free Software */
-/*  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301
- * USA            */
+/*  Standalone CARTS test version of SparseLU with task dependencies
+ *  Self-contained single-file version for CARTS compiler testing
+ *
+ *  Based on Barcelona OpenMP Tasks Suite
+ *  Copyright (C) 2009 Barcelona Supercomputing Center
+ *  License: GNU GPL
+ */
 /**********************************************************************************************/
 
-#include "sparselu.h"
-#include <libgen.h>
-#include <stdint.h>
+#include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-void sparselu_par_call(float **BENCH, int matrix_size, int submatrix_size) {
+#define EPSILON 1.0E-6
+
+//===----------------------------------------------------------------------===//
+// Utility Functions (Static)
+//===----------------------------------------------------------------------===//
+
+static float *allocate_clean_block(int submatrix_size) {
+  int i, j;
+  float *p, *q;
+
+  p = (float *)malloc(submatrix_size * submatrix_size * sizeof(float));
+  q = p;
+  if (p != NULL) {
+    for (i = 0; i < submatrix_size; i++)
+      for (j = 0; j < submatrix_size; j++) {
+        (*p) = 0.0;
+        p++;
+      }
+  } else {
+    fprintf(stderr, "Error: malloc failed in allocate_clean_block\n");
+    exit(101);
+  }
+  return (q);
+}
+
+static void lu0(float *diag, int submatrix_size) {
+  int i, j, k;
+
+  for (k = 0; k < submatrix_size; k++)
+    for (i = k + 1; i < submatrix_size; i++) {
+      diag[i * submatrix_size + k] =
+          diag[i * submatrix_size + k] / diag[k * submatrix_size + k];
+      for (j = k + 1; j < submatrix_size; j++)
+        diag[i * submatrix_size + j] =
+            diag[i * submatrix_size + j] -
+            diag[i * submatrix_size + k] * diag[k * submatrix_size + j];
+    }
+}
+
+static void bdiv(float *diag, float *row, int submatrix_size) {
+  int i, j, k;
+  for (i = 0; i < submatrix_size; i++)
+    for (k = 0; k < submatrix_size; k++) {
+      row[i * submatrix_size + k] =
+          row[i * submatrix_size + k] / diag[k * submatrix_size + k];
+      for (j = k + 1; j < submatrix_size; j++)
+        row[i * submatrix_size + j] =
+            row[i * submatrix_size + j] -
+            row[i * submatrix_size + k] * diag[k * submatrix_size + j];
+    }
+}
+
+static void bmod(float *row, float *col, float *inner, int submatrix_size) {
+  int i, j, k;
+  for (i = 0; i < submatrix_size; i++)
+    for (j = 0; j < submatrix_size; j++)
+      for (k = 0; k < submatrix_size; k++)
+        inner[i * submatrix_size + j] =
+            inner[i * submatrix_size + j] -
+            row[i * submatrix_size + k] * col[k * submatrix_size + j];
+}
+
+static void fwd(float *diag, float *col, int submatrix_size) {
+  int i, j, k;
+  for (j = 0; j < submatrix_size; j++)
+    for (k = 0; k < submatrix_size; k++)
+      for (i = k + 1; i < submatrix_size; i++)
+        col[i * submatrix_size + j] =
+            col[i * submatrix_size + j] -
+            diag[i * submatrix_size + k] * col[k * submatrix_size + j];
+}
+
+//===----------------------------------------------------------------------===//
+// Matrix Generation
+//===----------------------------------------------------------------------===//
+
+static void genmat(float *M[], int matrix_size, int submatrix_size) {
+  int null_entry, init_val, i, j, ii, jj;
+
+  init_val = 1325;
+
+  /* generating the structure */
+  for (ii = 0; ii < matrix_size; ii++) {
+    for (jj = 0; jj < matrix_size; jj++) {
+#pragma omp task shared(M)
+      {
+        float *p;
+        /* computing null entries */
+        null_entry = 0;
+        if ((ii < jj) && (ii % 3 != 0))
+          null_entry = 1;
+        if ((ii > jj) && (jj % 3 != 0))
+          null_entry = 1;
+        if (ii % 2 == 1)
+          null_entry = 1;
+        if (jj % 2 == 1)
+          null_entry = 1;
+        if (ii == jj)
+          null_entry = 0;
+        if (ii == jj - 1)
+          null_entry = 0;
+        if (ii - 1 == jj)
+          null_entry = 0;
+        /* allocating matrix */
+        if (null_entry == 0) {
+          M[ii * matrix_size + jj] =
+              (float *)malloc(submatrix_size * submatrix_size * sizeof(float));
+          if (M[ii * matrix_size + jj] == NULL) {
+            fprintf(stderr, "Error: malloc failed in genmat\n");
+            exit(101);
+          }
+          /* initializing matrix */
+          p = M[ii * matrix_size + jj];
+          for (i = 0; i < submatrix_size; i++) {
+            for (j = 0; j < submatrix_size; j++) {
+              init_val = (3125 * init_val) % 65536;
+              (*p) = (float)((init_val - 32768.0) / 16384.0);
+              p++;
+            }
+          }
+        } else {
+          M[ii * matrix_size + jj] = NULL;
+        }
+      }
+    }
+  }
+#pragma omp taskwait
+}
+
+static void sparselu_init(float ***pBENCH, int matrix_size, int submatrix_size) {
+  *pBENCH = (float **)malloc(matrix_size * matrix_size * sizeof(float *));
+  if (*pBENCH == NULL) {
+    fprintf(stderr, "Error: malloc failed for benchmark matrix\n");
+    exit(101);
+  }
+  genmat(*pBENCH, matrix_size, submatrix_size);
+}
+
+//===----------------------------------------------------------------------===//
+// Parallel SparseLU with Task Dependencies
+//===----------------------------------------------------------------------===//
+
+static void sparselu_par_call(float **BENCH, int matrix_size, int submatrix_size) {
   int ii, jj, kk;
 
 #pragma omp parallel private(kk, ii, jj) shared(BENCH)
-#pragma omp single /* nowait */
+#pragma omp single
   {
-    /*#pragma omp task untied*/
     for (kk = 0; kk < matrix_size; kk++) {
 #pragma omp task firstprivate(kk) shared(BENCH)                                \
     depend(inout : BENCH[kk * matrix_size +                                    \
@@ -75,4 +203,39 @@ void sparselu_par_call(float **BENCH, int matrix_size, int submatrix_size) {
     }
 #pragma omp taskwait
   }
+}
+
+//===----------------------------------------------------------------------===//
+// Main Test Function
+//===----------------------------------------------------------------------===//
+
+int main(void) {
+  float **BENCH;
+  int matrix_size = 16;      // Small size for testing
+  int submatrix_size = 8;    // Subblock size
+
+  printf("SparseLU Task-Dep Test (CARTS)\n");
+  printf("Matrix size: %d x %d blocks\n", matrix_size, matrix_size);
+  printf("Submatrix size: %d x %d\n", submatrix_size, submatrix_size);
+
+  // Initialize matrix
+#pragma omp parallel
+#pragma omp master
+  sparselu_init(&BENCH, matrix_size, submatrix_size);
+
+  printf("Running parallel SparseLU with task dependencies...\n");
+
+  // Run parallel SparseLU
+  sparselu_par_call(BENCH, matrix_size, submatrix_size);
+
+  printf("SparseLU completed successfully!\n");
+
+  // Cleanup
+  for (int i = 0; i < matrix_size * matrix_size; i++) {
+    if (BENCH[i] != NULL)
+      free(BENCH[i]);
+  }
+  free(BENCH);
+
+  return 0;
 }

@@ -1,0 +1,6 @@
+Block dependencies not yet supported in CARTS.
+
+This benchmark uses OpenMP task dependencies on block-structured data (memref arrays),
+which require additional compiler support for proper dependency analysis and tracking.
+
+Status: Disabled until block dependency support is implemented.

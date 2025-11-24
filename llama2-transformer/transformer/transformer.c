@@ -1,4 +1,4 @@
-/* Transformer model implementation for CARTS benchmark */
+/* Transformer model implementation for carts benchmarks */
 
 #include <math.h>
 #include <omp.h>

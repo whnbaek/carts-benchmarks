@@ -40,24 +40,59 @@ for i = 0 to NI-1:
 
 ## Problem Sizes
 
-- **MINI**: 32×32 matrices
-- **SMALL**: 128×128 matrices
-- **STANDARD**: 1024×1024 matrices
-- **LARGE**: 2000×2000 matrices
-- **EXTRALARGE**: 4000×4000 matrices
+| Size | Dimensions | Description |
+|------|------------|-------------|
+| **MINI** | 32×32 | Minimal size for quick testing |
+| **SMALL** | 128×128 | Small problem size |
+| **MEDIUM** | 1024×1024 | Standard problem size (default) |
+| **LARGE** | 2000×2000 | Large problem size |
+| **EXTRALARGE** | 4000×4000 | Extra large problem size |
 
 ## OpenMP Parallelization
 
 Uses `#pragma omp parallel` with `#pragma omp for private(j, k)` for both matrix multiplication loops.
 
-## Building
+## Building and Running
+
+### Build with CARTS pipeline
 
 ```bash
-# Standard build
-make
+# Build small size (128×128)
+make small
 
-# With specific size
-make CFLAGS="-O2 -fopenmp -DMINI_DATASET"
+# Build medium size (1024×1024) - default
+make medium
+
+# Build large size (2000×2000)
+make large
+
+# Build all pipeline stages (seq, metadata, parallel, concurrency)
+make all
+```
+
+### Build individual stages
+
+```bash
+# Generate sequential MLIR
+make seq
+
+# Collect runtime metadata
+make metadata
+
+# Generate parallel MLIR
+make parallel
+
+# Run concurrency analysis
+make concurrency
+
+# Run optimized concurrency analysis
+make concurrency-opt
+```
+
+### Clean build artifacts
+
+```bash
+make clean
 ```
 
 ## Use in Machine Learning

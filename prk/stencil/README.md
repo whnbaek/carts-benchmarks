@@ -48,11 +48,69 @@ Stencil patterns:
 ./stencil <# threads> <# iterations> <array dimension>
 ```
 
-## Example
+## Problem Sizes
+
+This benchmark uses runtime arguments for problem size configuration:
+
+| Size | Configuration | Description |
+|------|--------------|-------------|
+| **SMALL** | `./prk-stencil.exe 4 100 1000` | 1000×1000 grid |
+| **MEDIUM** | `./prk-stencil.exe 4 100 5000` | 5000×5000 grid |
+| **LARGE** | `./prk-stencil.exe 4 100 10000` | 10000×10000 grid |
+
+**Note**: Problem size is specified at runtime, not compile-time.
+
+## Building and Running
+
+### Build with CARTS pipeline
 
 ```bash
+# Build all pipeline stages
+make all
+
+# The small/medium/large targets provide usage hints
+make small   # Shows command for small problem
+make medium  # Shows command for medium problem
+make large   # Shows command for large problem
+```
+
+### Build individual stages
+
+```bash
+# Generate sequential MLIR
+make seq
+
+# Collect runtime metadata
+make metadata
+
+# Generate parallel MLIR
+make parallel
+
+# Run concurrency analysis
+make concurrency
+
+# Run optimized concurrency analysis
+make concurrency-opt
+```
+
+### Run with different problem sizes
+
+```bash
+# After building, run with command-line arguments:
 # 4 threads, 100 iterations, 1000×1000 grid
-./stencil 4 100 1000
+./prk-stencil.exe 4 100 1000
+
+# 8 threads, 200 iterations, 5000×5000 grid
+./prk-stencil.exe 8 200 5000
+```
+
+### Clean build artifacts
+
+```bash
+make clean
+
+# Also remove generated loop body files
+make veryclean
 ```
 
 ## Use in Computing

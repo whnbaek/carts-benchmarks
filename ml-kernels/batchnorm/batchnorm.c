@@ -6,8 +6,8 @@
  *
  * Description:
  *   Batch normalization normalizes activations across the batch dimension.
- *   For each channel, computes mean and variance across batch and spatial dimensions,
- *   then normalizes, scales, and shifts the activations.
+ *   For each channel, computes mean and variance across batch and spatial
+ * dimensions, then normalizes, scales, and shifts the activations.
  *
  * Algorithm:
  *   For each channel c:
@@ -27,9 +27,9 @@
  * - Self-contained functions
  */
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <math.h>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -53,6 +53,12 @@
 
 #define EPSILON 0.00001f
 
+static inline int flatten_batch_channel_offset(int batch_idx, int channel_idx,
+                                               int offset, int filters,
+                                               int spatial) {
+  return (batch_idx * filters + channel_idx) * spatial + offset;
+}
+
 /*
  * Compute mean across batch and spatial dimensions for each channel
  *
@@ -63,24 +69,23 @@
  *   spatial: Height * Width
  *   mean: Output mean for each channel [filters]
  */
-void mean_cpu(float *x, int batch, int filters, int spatial, float *mean)
-{
-    float scale = 1.0f / (batch * spatial);
-    int i, j, k;
+void mean_cpu(float *x, int batch, int filters, int spatial, float *mean) {
+  float scale = 1.0f / (batch * spatial);
+  int i, j, k;
 
-    #ifdef _OPENMP
-    #pragma omp parallel for private(j, k)
-    #endif
-    for (i = 0; i < filters; ++i) {
-        mean[i] = 0;
-        for (j = 0; j < batch; ++j) {
-            for (k = 0; k < spatial; ++k) {
-                int index = j * filters * spatial + i * spatial + k;
-                mean[i] += x[index];
-            }
-        }
-        mean[i] *= scale;
+#ifdef _OPENMP
+#pragma omp parallel for private(j, k)
+#endif
+  for (i = 0; i < filters; ++i) {
+    mean[i] = 0;
+    for (j = 0; j < batch; ++j) {
+      for (k = 0; k < spatial; ++k) {
+        int index = flatten_batch_channel_offset(j, i, k, filters, spatial);
+        mean[i] += x[index];
+      }
     }
+    mean[i] *= scale;
+  }
 }
 
 /*
@@ -94,25 +99,25 @@ void mean_cpu(float *x, int batch, int filters, int spatial, float *mean)
  *   spatial: Height * Width
  *   variance: Output variance for each channel [filters]
  */
-void variance_cpu(float *x, float *mean, int batch, int filters, int spatial, float *variance)
-{
-    float scale = 1.0f / (batch * spatial - 1);
-    int i, j, k;
+void variance_cpu(float *x, float *mean, int batch, int filters, int spatial,
+                  float *variance) {
+  float scale = 1.0f / (batch * spatial - 1);
+  int i, j, k;
 
-    #ifdef _OPENMP
-    #pragma omp parallel for private(j, k)
-    #endif
-    for (i = 0; i < filters; ++i) {
-        variance[i] = 0;
-        for (j = 0; j < batch; ++j) {
-            for (k = 0; k < spatial; ++k) {
-                int index = j * filters * spatial + i * spatial + k;
-                float diff = x[index] - mean[i];
-                variance[i] += diff * diff;
-            }
-        }
-        variance[i] *= scale;
+#ifdef _OPENMP
+#pragma omp parallel for private(j, k)
+#endif
+  for (i = 0; i < filters; ++i) {
+    variance[i] = 0;
+    for (j = 0; j < batch; ++j) {
+      for (k = 0; k < spatial; ++k) {
+        int index = flatten_batch_channel_offset(j, i, k, filters, spatial);
+        float diff = x[index] - mean[i];
+        variance[i] += diff * diff;
+      }
     }
+    variance[i] *= scale;
+  }
 }
 
 /*
@@ -126,21 +131,21 @@ void variance_cpu(float *x, float *mean, int batch, int filters, int spatial, fl
  *   filters: Number of channels
  *   spatial: Height * Width
  */
-void normalize_cpu(float *x, float *mean, float *variance, int batch, int filters, int spatial)
-{
-    int b, f, i;
+void normalize_cpu(float *x, float *mean, float *variance, int batch,
+                   int filters, int spatial) {
+  int b, f, i;
 
-    #ifdef _OPENMP
-    #pragma omp parallel for private(f, i) collapse(2)
-    #endif
-    for (b = 0; b < batch; ++b) {
-        for (f = 0; f < filters; ++f) {
-            for (i = 0; i < spatial; ++i) {
-                int index = b * filters * spatial + f * spatial + i;
-                x[index] = (x[index] - mean[f]) / (sqrtf(variance[f] + EPSILON));
-            }
-        }
+#ifdef _OPENMP
+#pragma omp parallel for private(f, i) collapse(2)
+#endif
+  for (b = 0; b < batch; ++b) {
+    for (f = 0; f < filters; ++f) {
+      for (i = 0; i < spatial; ++i) {
+        int index = flatten_batch_channel_offset(b, f, i, filters, spatial);
+        x[index] = (x[index] - mean[f]) / (sqrtf(variance[f] + EPSILON));
+      }
     }
+  }
 }
 
 /*
@@ -153,21 +158,20 @@ void normalize_cpu(float *x, float *mean, float *variance, int batch, int filter
  *   n: Number of channels
  *   size: Spatial size (height * width)
  */
-void scale_bias_cpu(float *output, float *scales, int batch, int n, int size)
-{
-    int i, j, b;
+void scale_bias_cpu(float *output, float *scales, int batch, int n, int size) {
+  int i, j, b;
 
-    #ifdef _OPENMP
-    #pragma omp parallel for private(i, j) collapse(2)
-    #endif
-    for (b = 0; b < batch; ++b) {
-        for (i = 0; i < n; ++i) {
-            for (j = 0; j < size; ++j) {
-                int index = b * n * size + i * size + j;
-                output[index] *= scales[i];
-            }
-        }
+#ifdef _OPENMP
+#pragma omp parallel for private(i, j) collapse(2)
+#endif
+  for (b = 0; b < batch; ++b) {
+    for (i = 0; i < n; ++i) {
+      for (j = 0; j < size; ++j) {
+        int index = flatten_batch_channel_offset(b, i, j, n, size);
+        output[index] *= scales[i];
+      }
     }
+  }
 }
 
 /*
@@ -180,21 +184,20 @@ void scale_bias_cpu(float *output, float *scales, int batch, int n, int size)
  *   n: Number of channels
  *   size: Spatial size (height * width)
  */
-void add_bias_cpu(float *output, float *biases, int batch, int n, int size)
-{
-    int i, j, b;
+void add_bias_cpu(float *output, float *biases, int batch, int n, int size) {
+  int i, j, b;
 
-    #ifdef _OPENMP
-    #pragma omp parallel for private(i, j) collapse(2)
-    #endif
-    for (b = 0; b < batch; ++b) {
-        for (i = 0; i < n; ++i) {
-            for (j = 0; j < size; ++j) {
-                int index = b * n * size + i * size + j;
-                output[index] += biases[i];
-            }
-        }
+#ifdef _OPENMP
+#pragma omp parallel for private(i, j) collapse(2)
+#endif
+  for (b = 0; b < batch; ++b) {
+    for (i = 0; i < n; ++i) {
+      for (j = 0; j < size; ++j) {
+        int index = flatten_batch_channel_offset(b, i, j, n, size);
+        output[index] += biases[i];
+      }
     }
+  }
 }
 
 /*
@@ -212,146 +215,138 @@ void add_bias_cpu(float *output, float *biases, int batch, int n, int size)
  *   mean: Workspace for mean [channels]
  *   variance: Workspace for variance [channels]
  */
-void batchnorm_forward(
-    float *x,
-    float *output,
-    float *scales,
-    float *biases,
-    int batch,
-    int channels,
-    int height,
-    int width,
-    float *mean,
-    float *variance)
-{
-    int spatial = height * width;
-    int i;
+void batchnorm_forward(float *x, float *output, float *scales, float *biases,
+                       int batch, int channels, int height, int width,
+                       float *mean, float *variance) {
+  int spatial = height * width;
+  int i;
 
-    // Copy input to output (will be modified in-place)
-    int total_size = batch * channels * spatial;
-    #ifdef _OPENMP
-    #pragma omp parallel for
-    #endif
-    for (i = 0; i < total_size; ++i) {
-        output[i] = x[i];
-    }
+  // Copy input to output (will be modified in-place)
+  int total_size = batch * channels * spatial;
+#ifdef _OPENMP
+#pragma omp parallel for
+#endif
+  for (i = 0; i < total_size; ++i) {
+    output[i] = x[i];
+  }
 
-    // Compute statistics
-    mean_cpu(output, batch, channels, spatial, mean);
-    variance_cpu(output, mean, batch, channels, spatial, variance);
+  // Compute statistics
+  mean_cpu(output, batch, channels, spatial, mean);
+  variance_cpu(output, mean, batch, channels, spatial, variance);
 
-    // Normalize
-    normalize_cpu(output, mean, variance, batch, channels, spatial);
+  // Normalize
+  normalize_cpu(output, mean, variance, batch, channels, spatial);
 
-    // Scale and shift
-    scale_bias_cpu(output, scales, batch, channels, spatial);
-    add_bias_cpu(output, biases, batch, channels, spatial);
+  // Scale and shift
+  scale_bias_cpu(output, scales, batch, channels, spatial);
+  add_bias_cpu(output, biases, batch, channels, spatial);
 }
 
 /*
  * Initialize test data
  */
-void init_data(float *x, float *scales, float *biases, int batch, int channels, int spatial)
-{
-    int i;
-    int total = batch * channels * spatial;
+void init_data(float *x, float *scales, float *biases, int batch, int channels,
+               int spatial) {
+  int i;
+  int total = batch * channels * spatial;
 
-    // Initialize input with some pattern
-    for (i = 0; i < total; ++i) {
-        x[i] = ((float)i / total) * 2.0f - 1.0f;  // Range [-1, 1]
-    }
+  // Initialize input with some pattern
+  for (i = 0; i < total; ++i) {
+    x[i] = ((float)i / total) * 2.0f - 1.0f; // Range [-1, 1]
+  }
 
-    // Initialize scales to 1.0 and biases to 0.0
-    for (i = 0; i < channels; ++i) {
-        scales[i] = 1.0f;
-        biases[i] = 0.0f;
-    }
+  // Initialize scales to 1.0 and biases to 0.0
+  for (i = 0; i < channels; ++i) {
+    scales[i] = 1.0f;
+    biases[i] = 0.0f;
+  }
 }
 
 /*
  * Compute reference statistics for validation
  */
-void compute_reference_stats(float *output, int batch, int channels, int spatial,
-                             float *ref_mean, float *ref_variance)
-{
-    // Compute mean and variance of normalized output
-    mean_cpu(output, batch, channels, spatial, ref_mean);
-    variance_cpu(output, ref_mean, batch, channels, spatial, ref_variance);
+void compute_reference_stats(float *output, int batch, int channels,
+                             int spatial, float *ref_mean,
+                             float *ref_variance) {
+  // Compute mean and variance of normalized output
+  mean_cpu(output, batch, channels, spatial, ref_mean);
+  variance_cpu(output, ref_mean, batch, channels, spatial, ref_variance);
 }
 
-int main(int argc, char **argv)
-{
-    int batch = BATCH_SIZE;
-    int channels = CHANNELS;
-    int height = HEIGHT;
-    int width = WIDTH;
-    int spatial = height * width;
-    int total_size = batch * channels * spatial;
+int main(int argc, char **argv) {
+  int batch = BATCH_SIZE;
+  int channels = CHANNELS;
+  int height = HEIGHT;
+  int width = WIDTH;
+  int spatial = height * width;
+  int total_size = batch * channels * spatial;
 
-    printf("Batch Normalization Kernel\n");
-    printf("===========================\n");
-    printf("Configuration:\n");
-    printf("  Batch size: %d\n", batch);
-    printf("  Channels: %d\n", channels);
-    printf("  Spatial: %d x %d = %d\n", height, width, spatial);
-    printf("  Total elements: %d\n", total_size);
-    printf("\n");
+  printf("Batch Normalization Kernel\n");
+  printf("===========================\n");
+  printf("Configuration:\n");
+  printf("  Batch size: %d\n", batch);
+  printf("  Channels: %d\n", channels);
+  printf("  Spatial: %d x %d = %d\n", height, width, spatial);
+  printf("  Total elements: %d\n", total_size);
+  printf("\n");
 
-    // Allocate memory
-    float *x = (float *)malloc(total_size * sizeof(float));
-    float *output = (float *)malloc(total_size * sizeof(float));
-    float *scales = (float *)malloc(channels * sizeof(float));
-    float *biases = (float *)malloc(channels * sizeof(float));
-    float *mean = (float *)malloc(channels * sizeof(float));
-    float *variance = (float *)malloc(channels * sizeof(float));
+  // Allocate memory
+  float *x = (float *)malloc(total_size * sizeof(float));
+  float *output = (float *)malloc(total_size * sizeof(float));
+  float *scales = (float *)malloc(channels * sizeof(float));
+  float *biases = (float *)malloc(channels * sizeof(float));
+  float *mean = (float *)malloc(channels * sizeof(float));
+  float *variance = (float *)malloc(channels * sizeof(float));
 
-    if (!x || !output || !scales || !biases || !mean || !variance) {
-        fprintf(stderr, "Memory allocation failed\n");
-        return 1;
-    }
+  if (!x || !output || !scales || !biases || !mean || !variance) {
+    fprintf(stderr, "Memory allocation failed\n");
+    return 1;
+  }
 
-    // Initialize data
-    init_data(x, scales, biases, batch, channels, spatial);
+  // Initialize data
+  init_data(x, scales, biases, batch, channels, spatial);
 
-    // Run batch normalization
-    printf("Running batch normalization...\n");
-    batchnorm_forward(x, output, scales, biases, batch, channels, height, width, mean, variance);
+  // Run batch normalization
+  printf("Running batch normalization...\n");
+  batchnorm_forward(x, output, scales, biases, batch, channels, height, width,
+                    mean, variance);
 
-    // Validation: normalized output should have mean ≈ 0 and variance ≈ 1 (before scale/bias)
-    float *ref_mean = (float *)malloc(channels * sizeof(float));
-    float *ref_variance = (float *)malloc(channels * sizeof(float));
+  // Validation: normalized output should have mean ≈ 0 and variance ≈ 1 (before
+  // scale/bias)
+  float *ref_mean = (float *)malloc(channels * sizeof(float));
+  float *ref_variance = (float *)malloc(channels * sizeof(float));
 
-    // Check a few statistics
-    printf("\nValidation:\n");
-    printf("  First 5 channel means: ");
-    for (int i = 0; i < 5 && i < channels; ++i) {
-        printf("%.6f ", mean[i]);
-    }
-    printf("\n");
+  // Check a few statistics
+  printf("\nValidation:\n");
+  printf("  First 5 channel means: ");
+  for (int i = 0; i < 5 && i < channels; ++i) {
+    printf("%.6f ", mean[i]);
+  }
+  printf("\n");
 
-    printf("  First 5 channel variances: ");
-    for (int i = 0; i < 5 && i < channels; ++i) {
-        printf("%.6f ", variance[i]);
-    }
-    printf("\n");
+  printf("  First 5 channel variances: ");
+  for (int i = 0; i < 5 && i < channels; ++i) {
+    printf("%.6f ", variance[i]);
+  }
+  printf("\n");
 
-    printf("  First 5 output values: ");
-    for (int i = 0; i < 5; ++i) {
-        printf("%.6f ", output[i]);
-    }
-    printf("\n");
+  printf("  First 5 output values: ");
+  for (int i = 0; i < 5; ++i) {
+    printf("%.6f ", output[i]);
+  }
+  printf("\n");
 
-    printf("\nBatch normalization completed successfully!\n");
+  printf("\nBatch normalization completed successfully!\n");
 
-    // Cleanup
-    free(x);
-    free(output);
-    free(scales);
-    free(biases);
-    free(mean);
-    free(variance);
-    free(ref_mean);
-    free(ref_variance);
+  // Cleanup
+  free(x);
+  free(output);
+  free(scales);
+  free(biases);
+  free(mean);
+  free(variance);
+  free(ref_mean);
+  free(ref_variance);
 
-    return 0;
+  return 0;
 }

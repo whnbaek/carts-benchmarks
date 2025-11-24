@@ -36,6 +36,8 @@
  */
 
 #include "strassen.h"
+#include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 /*****************************************************************************
@@ -336,4 +338,70 @@ void strassen_main_par(double *A, double *B, double *C, int n,
 #pragma omp master
   OptimizedStrassenMultiply_par(C, A, B, n, n, n, n, 1, cutoff_depth,
                                 cutoff_size);
+}
+
+int main(void) {
+#ifdef SIZE
+  int n = SIZE;
+  // Ensure size is a power of 2 for Strassen
+  int size = 1;
+  while (size < n) size *= 2;
+  if (size != n) n = size; // Round up to nearest power of 2
+  if (n < 16) n = 16;      // Minimum size
+  if (n > 2048) n = 2048;  // Maximum size for reasonable memory
+#else
+  int n = 64;              // Default for testing
+#endif
+
+  unsigned int cutoff_size = 16;
+  unsigned int cutoff_depth = 2;
+
+  printf("Strassen Task Test (CARTS)\n");
+  printf("Matrix size: %d x %d\n", n, n);
+  printf("Cutoff size: %d, Cutoff depth: %d\n", cutoff_size, cutoff_depth);
+
+  // Allocate matrices
+  double *A = (double *)malloc(n * n * sizeof(double));
+  double *B = (double *)malloc(n * n * sizeof(double));
+  double *C_par = (double *)malloc(n * n * sizeof(double));
+  double *C_seq = (double *)malloc(n * n * sizeof(double));
+
+  if (!A || !B || !C_par || !C_seq) {
+    fprintf(stderr, "Memory allocation failed\n");
+    return 1;
+  }
+
+  // Initialize matrices
+  for (int i = 0; i < n * n; i++) {
+    A[i] = (double)(rand() % 100) / 10.0;
+    B[i] = (double)(rand() % 100) / 10.0;
+    C_par[i] = 0.0;
+    C_seq[i] = 0.0;
+  }
+
+  printf("Running parallel Strassen with tasks...\n");
+  strassen_main_par(A, B, C_par, n, cutoff_size, cutoff_depth);
+
+  printf("Running sequential Strassen for verification...\n");
+  strassen_main_seq(A, B, C_seq, n, cutoff_size);
+
+  // Compare results
+  printf("Verifying results...\n");
+  double error = 0.0;
+  for (int i = 0; i < n * n; i++) {
+    double diff = C_par[i] - C_seq[i];
+    error += diff * diff;
+  }
+  error = sqrt(error / (n * n));
+
+  printf("Verification: %s (RMS error: %.2e)\n",
+         (error < 1e-4) ? "PASS" : "FAIL", error);
+
+  // Cleanup
+  free(A);
+  free(B);
+  free(C_par);
+  free(C_seq);
+
+  return (error < 1e-4) ? 0 : 1;
 }

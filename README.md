@@ -1,350 +1,379 @@
-# CARTS Benchmarks
+# carts benchmarkss
 
-Comprehensive benchmark suite for testing the CARTS (Compiler for Automatic Runtime Task Scheduling) system. This collection includes benchmarks from classical HPC suites, AI/ML kernels, stencil computations, and task-parallel applications.
-
-## Overview
-
-All benchmarks in this repository have been verified for CARTS compatibility:
-- ✅ **No global variables** - Clean parameter passing
-- ✅ **OpenMP parallelization** - Using parallel-for or task-based constructs
-- ✅ **Self-contained implementations** - Minimal external dependencies
-- ✅ **Well-documented** - Each benchmark includes README with attribution
-
-## Benchmark Categories
-
-### 1. Machine Learning & AI Kernels
-
-#### [ml-kernels/](ml-kernels/)
-Modern neural network computational kernels extracted from production frameworks.
-
-**Kernels**:
-- **[batchnorm/](ml-kernels/batchnorm/)** - Batch normalization (from Darknet)
-- **[pooling/](ml-kernels/pooling/)** - Max/Average/Global pooling (from Darknet)
-- **[activations/](ml-kernels/activations/)** - ReLU, GELU, Softmax, etc.
-
-**Source**: [Darknet](https://github.com/pjreddie/darknet), llama2.c
-**Focus**: Reduction operations, irregular memory access, element-wise operations
-
-#### [llama2-transformer/](llama2-transformer/)
-Decoder-only transformer architecture for language modeling.
-
-**Source**: [llama2.c by Andrej Karpathy](https://github.com/karpathy/llama2.c)
-**Features**: Multi-head attention, RMSNorm, SwiGLU activation
-**Focus**: Matrix operations, attention mechanism, layer-by-layer dependencies
-
----
-
-### 2. Dense Linear Algebra (Polybench)
-
-#### [polybench/](polybench/)
-Classical linear algebra kernels from the Polybench benchmark suite.
-
-**Matrix Operations**:
-- **[2mm/](polybench/2mm/)** - Two matrix multiplications: D = A × B × C
-- **[3mm/](polybench/3mm/)** - Three matrix multiplications: G = (A × B) × (C × D) × (E × F)
-- **[atax/](polybench/atax/)** - Matrix transpose and vector multiply
-- **[bicg/](polybench/bicg/)** - BiConjugate Gradient sub-kernel
-- **[gemm/](polybench/gemm/)** - General Matrix Multiply (existing)
-
-**Iterative Solvers**:
-- **[jacobi2d/](polybench/jacobi2d/)** - 2D Jacobi stencil (existing)
-- **[seidel-2d/](polybench/seidel-2d/)** - Gauss-Seidel 9-point stencil
-
-**Stencils**:
-- **[fdtd-2d/](polybench/fdtd-2d/)** - 2D Finite Difference Time Domain
-- **[convolution-2d/](polybench/convolution-2d/)** - 2D convolution (3×3 kernel)
-- **[convolution-3d/](polybench/convolution-3d/)** - 3D convolution (3×3×3 kernel)
-
-**Source**: [Polybench-ACC](https://github.com/cavazos-lab/PolyBench-ACC)
-**License**: BSD-like
-**Focus**: Dense matrix operations, stencil patterns, iterative methods
-
----
-
-### 3. Stencil Computations
-
-#### [prk/stencil/](prk/stencil/)
-Configurable 2D stencil with runtime-adjustable radius and patterns.
-
-**Source**: [Parallel Research Kernels (PRK)](https://github.com/ParRes/Kernels)
-**Features**: Star/compact patterns, configurable radius
-**Use**: PDEs, image processing, CFD
-**Focus**: Neighbor dependencies, spatial locality
-
-#### [sw4lite_rhs4sg_revNW/](sw4lite_rhs4sg_revNW/)
-Seismic wave propagation kernel from SW4lite.
-
-**Source**: SW4lite (LLNL)
-**Application**: Earthquake simulation
-**Focus**: 3D stencil, complex arithmetic dependencies
-
----
-
-### 4. Task-Parallel Benchmarks (KaStORS)
-
-#### [kastors/](kastors/)
-OpenMP 4.0 task dependency benchmarks from the KaStORS suite.
-
-**Benchmarks**:
-- **[jacobi/](kastors/jacobi/)** - Jacobi iterative solver
-  - `jacobi-for`: Parallel-for version
-  - `jacobi-task-dep`: Task-dependency version
-
-- **[sparselu/](kastors/sparselu/)** - Sparse LU factorization
-  - `sparselu-task`: Task-based
-  - `sparselu-task-dep`: With explicit dependencies
-
-- **[strassen/](kastors/strassen/)** - Strassen matrix multiplication
-  - `strassen-task`: Task-based
-  - `strassen-task-dep`: With explicit dependencies
-
-**Source**: [KaStORS](https://github.com/viroulep/kastors)
-**Original**: Barcelona OpenMP Tasks Suite (BOTS)
-**License**: GPL v2.0
-**Focus**: Task parallelism, dependency patterns, data-flow execution
-
----
-
-### 5. Embarrassingly Parallel
-
-#### [npb/ep/](npb/ep/)
-Monte Carlo random number generation benchmark.
-
-**Source**: NAS Parallel Benchmarks (NASA)
-**Pattern**: Embarrassingly parallel (no communication)
-**Focus**: Raw computational throughput, perfect parallelism
-
----
-
-### 6. Additional Benchmarks
-
-#### [simple-kernels/](simple-kernels/)
-Basic kernels for testing fundamental CARTS features.
-
-#### [bots/](bots/)
-Additional benchmarks from Barcelona OpenMP Tasks Suite.
-
-#### [task-parallelism-omp/](task-parallelism-omp/)
-Task-parallel patterns and examples.
-
-#### [miniapps/](miniapps/)
-Small representative applications.
-
----
+Comprehensive benchmark suite for the CARTS (Compiler for Automatic Runtime Task Scheduling) system. Includes classical HPC benchmarks, AI/ML kernels, stencil computations, and task-parallel applications.
 
 ## Quick Start
 
-### Building Individual Benchmarks
+### Building Benchmarks
 
-Most benchmarks include Makefiles with multiple size configurations:
-
-```bash
-# ML kernels
-cd ml-kernels/batchnorm/
-make                    # Standard size
-make mini              # Small (fast testing)
-make large             # Large (stress testing)
-
-# Polybench
-cd polybench/2mm/
-make                    # Uses polybench.mk
-
-# KaStORS
-cd kastors/sparselu/sparselu-task-dep/
-make
-
-# NPB
-cd npb/ep/
-gcc -O2 -fopenmp -lm ep.c -o ep -DM=24
-```
-
-### Running with CARTS
+Use the `carts benchmarks` command from anywhere in the CARTS project:
 
 ```bash
-cd /Users/randreshg/Documents/carts
+# Show available benchmarks and options
+carts benchmarks --help
 
-# ML kernel example
-./tools/carts run cgeist \
-  external/carts-benchmarks/ml-kernels/batchnorm/batchnorm.c \
-  -DBATCH_SIZE=4 -DCHANNELS=64 -DHEIGHT=32 -DWIDTH=32 \
-  -fopenmp -O2 -lm
+# Build with standard problem sizes
+carts benchmarks polybench/2mm small          # ~1,000 elements
+carts benchmarks sw4lite/rhs4sg-base medium   # ~10,000 elements
+carts benchmarks ml-kernels/batchnorm large   # ~100,000 elements
 
-# Polybench example
-./tools/carts run cgeist \
-  external/carts-benchmarks/polybench/2mm/2mm.c \
-  -I external/carts-benchmarks/polybench/utilities \
-  -I external/carts-benchmarks/polybench/common \
-  external/carts-benchmarks/polybench/utilities/polybench.c \
-  -DPOLYBENCH_TIME -DMINI_DATASET \
-  -fopenmp -O2 -lm
+# Build with default size
+carts benchmarks simple-kernels/stream
+
+# Build with custom ARTS configuration
+carts benchmarks polybench/gemm small /path/to/arts.cfg
 ```
 
----
+### Cleaning Benchmarks
 
-## Benchmark Statistics
+Remove build artifacts, MLIR files, and binaries:
 
-### Total Benchmarks
+```bash
+# Clean specific benchmark
+carts benchmarks clean polybench/2mm
 
-| Category | Benchmarks | Variants | Total Files |
-|----------|-----------|----------|-------------|
-| **ML Kernels** | 3 | 15+ functions | 3 |
-| **Polybench** | 10 | - | 10 |
-| **Stencils** | 2 | - | 2 |
-| **KaStORS** | 3 | 8 variants | 8 |
-| **NPB** | 1 | - | 1 |
-| **Others** | ~10 | - | ~10 |
-| **TOTAL** | **~29** | - | **~34** |
+# Clean entire suite
+carts benchmarks clean sw4lite
+carts benchmarks clean polybench
 
-### Lines of Code
+# Clean all benchmarks
+carts benchmarks clean --all
 
-- **ML Kernels**: ~1,300 lines
-- **Polybench**: ~5,000 lines (benchmarks only)
-- **KaStORS**: ~3,000 lines (3 benchmarks)
-- **Total**: ~15,000+ lines of benchmark code
+# Show what will be removed
+carts benchmarks clean --help
+```
 
----
+Removes: build/, logs/, *.mlir, *.ll, *.o, metadata files
 
-## Testing Focus Areas
+### Direct Makefile Usage
 
-### Memory Access Patterns
-- **Sequential**: Token embeddings, array scans
-- **Strided**: Multi-dimensional arrays, blocked algorithms
-- **Irregular**: Sparse matrices, dynamic indexing
-- **Stencil**: Neighbor access patterns
-- **Reduction**: Sum, max, statistics computation
+```bash
+# Build individual benchmark
+make -C polybench/2mm all
 
-### Dependency Patterns
-- **Independent**: Embarrassingly parallel (EP)
-- **Reduction**: Batch normalization statistics
-- **Producer-consumer**: Task dependencies
-- **Wavefront**: Stencil computations
-- **Recursive**: Strassen's algorithm
+# Build with specific size
+make -C sw4lite/rhs4sg-base small
+make -C sw4lite/rhs4sg-base medium
+make -C sw4lite/rhs4sg-base large
 
-### Parallelization Strategies
-- **Data parallel**: `#pragma omp parallel for`
-- **Task parallel**: `#pragma omp task`
-- **Dependencies**: `#pragma omp task depend(...)`
-- **Reductions**: `#pragma omp ... reduction(...)`
+# Build entire suite
+make -C sw4lite all
+make -C specfem3d all
+```
 
----
+## Repository Structure
 
-## Documentation
+```
+carts-benchmarks/
+├── polybench/           # Dense linear algebra (11 benchmarks)
+├── ml-kernels/          # Neural network kernels (4 benchmarks)
+├── sw4lite/             # Seismic wave propagation (3 benchmarks)
+├── specfem3d/           # Spectral element seismic (2 benchmarks)
+├── seissol/             # High-order DG seismic (1 benchmark)
+├── kastors/             # Task-parallel OpenMP (9 benchmarks)
+├── task-parallelism-omp/ # OpenMP task patterns (4 benchmarks)
+├── simple-kernels/      # Microbenchmarks (2 benchmarks)
+├── miniapps/            # Small applications (1 benchmark)
+├── npb/                 # NAS Parallel Benchmarks (1 benchmark)
+├── prk/                 # Parallel Research Kernels (1 benchmark)
+└── llama2-transformer/  # LLM transformer (1 benchmark)
+```
 
-Each benchmark directory contains a `README.md` with:
-- Algorithm description
-- Original source and repository links
-- Build and usage instructions
-- Mathematical background
-- CARTS compatibility notes
-- Performance characteristics
-- Academic citations
+## Benchmark Suites
 
-### Additional Documentation
+### Dense Linear Algebra (Polybench)
 
-- **[README_NEW_BENCHMARKS.md](README_NEW_BENCHMARKS.md)** - Integration guide for newly added benchmarks
-- **[AI_ML_BENCHMARKS.md](AI_ML_BENCHMARKS.md)** - Detailed AI/ML benchmark research and analysis
+**Source**: [PolyBench-ACC](https://github.com/cavazos-lab/PolyBench-ACC)
 
----
+Matrix operations and iterative solvers:
 
-## Source Attribution
+- `2mm`, `3mm` - Matrix multiplication chains
+- `atax`, `bicg` - Matrix-vector operations
+- `gemm` - General matrix multiply
+- `jacobi2d`, `seidel-2d` - Iterative stencil solvers
+- `fdtd-2d` - Finite difference time domain
+- `convolution-2d`, `convolution-3d` - Convolution kernels
+- `correlation` - Statistical correlation
 
-All benchmarks are properly attributed to their original sources:
+**Size configuration**: Uses dataset macros (SMALL_DATASET, STANDARD_DATASET, LARGE_DATASET)
 
-### Primary Sources
-- **Polybench**: [PolyBench-ACC](https://github.com/cavazos-lab/PolyBench-ACC) - BSD-like license
-- **KaStORS**: [KaStORS](https://github.com/viroulep/kastors) - GPL v2.0
-- **PRK**: [Parallel Research Kernels](https://github.com/ParRes/Kernels) - BSD 3-Clause
-- **NPB**: [NAS Parallel Benchmarks](https://www.nas.nasa.gov/software/npb.html) - NASA Open Source Agreement
-- **Darknet**: [Darknet](https://github.com/pjreddie/darknet) - Public Domain
-- **llama2.c**: [llama2.c](https://github.com/karpathy/llama2.c) - MIT License
+### Machine Learning Kernels
 
-### Key Papers
-- **Polybench**: Pouchet et al., "Polybench: The polyhedral benchmark suite." IMPACT, 2012.
-- **KaStORS**: Virouleau et al., "Evaluation of OpenMP dependent tasks with the KASTORS benchmark suite." IWOMP, 2014.
-- **BOTS**: Duran et al., "Barcelona OpenMP Tasks Suite." ICPP, 2009.
-- **NPB**: Bailey et al., "The NAS Parallel Benchmarks." IJSA, 1991.
-- **PRK**: Van der Wijngaart & Mattson, "The Parallel Research Kernels." HPCC, 2014.
+**Source**: [Darknet](https://github.com/pjreddie/darknet), [llama2.c](https://github.com/karpathy/llama2.c)
 
----
+Neural network computational kernels:
 
-## CARTS Compatibility Notes
+- `batchnorm` - Batch normalization
+- `pooling` - Max/average pooling operations
+- `activations` - ReLU, GELU, Softmax
+- `layernorm` - Layer normalization
+- `transformer` - Decoder-only transformer (llama2)
 
-### Supported Patterns
-- ✅ OpenMP `parallel for` (maps to multi-node in CARTS)
-- ✅ OpenMP `task` (maps to single-node in CARTS)
-- ✅ Reduction operations
-- ✅ Static arrays and VLAs
-- ✅ Clean function interfaces
+**Size configuration**: Uses preset targets (mini, small, standard, large)
 
-### Known Limitations
-- ❌ Global variables (all benchmarks verified to avoid)
-- ❌ Complex pointer aliasing (minimized in selection)
-- ❌ Inline assembly (not present)
-- ❌ External library dependencies (minimized)
+### Seismic Wave Propagation
 
-### Benchmark Modifications
-Some benchmarks include `-carts` variants with:
-- Removed global variables
-- Simplified control flow
-- Added explicit parameter passing
-- Adjusted for function inlining
+**SW4Lite** - [geodynamics/sw4lite](https://github.com/geodynamics/sw4lite)
 
----
+- `rhs4sg-base` - RHS assembly baseline (107 lines)
+- `rhs4sg-revnw` - RHS assembly optimized (1,189 lines)
+- `vel4sg-base` - Velocity update kernel
+
+**SPECFEM3D** - [SPECFEM/specfem3d](https://github.com/SPECFEM/specfem3d)
+
+- `stress` - Stress tensor update
+- `velocity` - Velocity update with divergence
+
+**SeisSol** - [SeisSol/SeisSol](https://github.com/SeisSol/SeisSol)
+
+- `volume-integral` - ADER-DG volume integral
+
+**Size configuration**: Grid dimensions for ~1K, ~10K, ~100K elements
+
+### Task Parallelism
+
+**KaStORS** - [viroulep/kastors](https://github.com/viroulep/kastors)
+
+OpenMP 4.0 task dependency benchmarks:
+
+- `jacobi/` - 4 variants (for, task-dep, poisson-for, poisson-task)
+- `sparselu/` - 2 variants (task, task-dep)
+- `strassen/` - 3 variants (main, task, task-dep)
+
+**Task Parallelism OMP** - [avcourt/task-parallelism-omp](https://github.com/avcourt/task-parallelism-omp)
+
+- `merge-serial`, `merge-tasks` - Merge sort implementations
+- `quick-tasks` - Quicksort with tasks
+- `get-time` - Timing utilities
+
+**Size configuration**: Matrix/grid dimensions (1024, 4096, 8192)
+
+### Microbenchmarks and Applications
+
+**Simple Kernels**
+
+- `stream` - Memory bandwidth (STREAM triad)
+- `axpy` - Basic BLAS operation
+
+**Miniapps**
+
+- `stencil2d` - 2D stencil miniapp
+
+**NPB**
+
+- `ep` - Embarrassingly parallel (Monte Carlo)
+
+**PRK**
+
+- `stencil` - Configurable stencil patterns
+
+## Standard Build Targets
+
+Every benchmark supports these targets:
+
+```bash
+make seq              # Sequential MLIR (no OpenMP)
+make metadata         # Collect parallelism metadata
+make parallel         # Parallel MLIR (with OpenMP)
+make concurrency      # Run concurrency analysis
+make concurrency-opt  # Run optimized concurrency
+make all              # Build all stages
+make clean            # Remove build artifacts
+```
 
 ## Problem Sizes
 
-Most benchmarks support multiple problem sizes:
+All benchmarks support three standardized sizes:
 
-### Size Classes
-- **MINI**: Fast compilation/execution (seconds) - for development
-- **SMALL**: Quick testing (tens of seconds)
-- **STANDARD**: Realistic workloads (minutes)
-- **LARGE**: Stress testing (tens of minutes)
+| Size | Elements | Use Case |
+|------|----------|----------|
+| small | ~1,000 | Quick testing, development |
+| medium | ~10,000 | Standard testing |
+| large | ~100,000 | Performance evaluation |
 
-### Configuration Methods
-- **Compile-time**: `-DMINI_DATASET`, `-DSTANDARD_DATASET`, etc.
-- **Command-line**: Arguments for matrix size, iterations
-- **Makefile targets**: `make mini`, `make small`, `make standard`, `make large`
+Suite-specific sizes:
 
----
+| Suite | Small | Medium | Large |
+|-------|-------|--------|-------|
+| simple-kernels | N=1000 | N=10000 | N=100000 |
+| miniapps | N=1000 | N=10000 | N=100000 |
+| sw4lite | 10×10×10 | 21×21×22 | 46×46×47 |
+| specfem3d | 5×5×5×8 | 5×5×5×80 | 5×5×5×800 |
+| seissol | 1000 | 10000 | 100000 |
+| polybench | SMALL_DATASET | STANDARD_DATASET | LARGE_DATASET |
+| ml-kernels | mini | standard | large |
+| kastors | 1024 | 4096 | 8192 |
+| npb | M=20 | M=24 | M=28 |
+
+## Build Configuration
+
+### Compile-time Options
+
+```bash
+# Custom compiler flags
+make -C polybench/2mm CFLAGS="-DMINI_DATASET -I/custom/path" all
+
+# Custom ARTS configuration
+make -C sw4lite/rhs4sg-base ARTS_CFG=/path/to/arts.cfg all
+
+# Custom build/log directories
+make -C ml-kernels/batchnorm BUILD_DIR=./output LOG_DIR=./logs all
+```
+
+### Runtime Parameters
+
+Some benchmarks use runtime parameters:
+
+```bash
+# PRK stencil: <threads> <iterations> <dimension>
+./prk-stencil 4 100 1000
+
+# Task parallelism: element counts passed at runtime
+./merge-tasks 100000
+```
+
+## CARTS Compatibility
+
+All benchmarks meet these requirements:
+
+- No global variables (clean parameter passing)
+- OpenMP parallelization (parallel-for or task-based)
+- Self-contained implementations
+- Minimal external dependencies
+- Documented with upstream attribution
+
+## Workflow
+
+Standard CARTS compilation workflow:
+
+```
+C/C++ source
+    ↓ cgeist (sequential)
+Sequential MLIR
+    ↓ carts run --collect-metadata
+Metadata JSON
+    ↓ cgeist (with OpenMP)
+Parallel MLIR
+    ↓ carts run --concurrency
+ARTS MLIR
+    ↓ carts run --emit-llvm
+LLVM IR
+    ↓ carts compile
+Executable
+```
+
+Each benchmark's Makefile automates this pipeline with configurable stages.
+
+## Advanced Usage
+
+### Building Suites
+
+```bash
+# Build all benchmarks in a suite
+make -C polybench all
+make -C sw4lite all
+make -C kastors all
+
+# Build specific suite with size
+cd kastors/jacobi
+make small   # Builds all jacobi variants with SIZE=1024
+```
+
+### Custom Configurations
+
+```bash
+# Override specific parameters
+make -C sw4lite/rhs4sg-base CFLAGS="-DNX=64 -DNY=64 -DNZ=64" all
+
+# Build with debug symbols
+make -C polybench/2mm CFLAGS="-g -DSMALL_DATASET" all
+
+# Specify custom radius for PRK stencil
+make -C prk/stencil RADIUS=4 DOUBLE=1 all
+```
+
+### Intermediate Outputs
+
+```bash
+# Stop at specific pipeline stage
+make -C polybench/2mm seq          # Only sequential MLIR
+make -C polybench/2mm metadata     # Stop after metadata collection
+make -C polybench/2mm parallel     # Only parallel MLIR
+
+# View generated artifacts
+ls polybench/2mm/build/
+# 2mm_seq.mlir
+# 2mm.carts-metadata.json
+# 2mm.mlir
+# 2mm_complete.mlir
+# 2mm.ll
+```
+
+## Directory Structure
+
+Each benchmark follows this structure:
+
+```
+benchmark-name/
+├── Makefile              # Includes suite-specific common.mk
+├── README.md             # Benchmark documentation
+├── source.c              # Source code
+├── arts.cfg              # ARTS runtime config (optional)
+├── build/                # Generated MLIR/LLVM artifacts
+└── logs/                 # Build logs for each stage
+```
+
+Suites provide shared infrastructure:
+
+```
+suite-name/
+├── common/
+│   └── carts-example.mk  # Suite-specific build configuration
+├── Makefile              # Suite-level build driver
+├── README.md             # Suite documentation
+└── benchmark-1/
+    └── ...
+```
+
+## References
+
+### Upstream Sources
+
+- **PolyBench**: Pouchet et al., "Polybench: The polyhedral benchmark suite." IMPACT, 2012
+- **KaStORS**: Virouleau et al., "Evaluation of OpenMP dependent tasks with the KASTORS benchmark suite." IWOMP, 2014
+- **NPB**: Bailey et al., "The NAS Parallel Benchmarks." IJSA, 1991
+- **PRK**: Van der Wijngaart & Mattson, "The Parallel Research Kernels." HPCC, 2014
+- **SPECFEM3D**: Komatitsch & Tromp, "Introduction to the spectral element method." GJI, 1999
+- **SeisSol**: Dumbser & Käser, "An arbitrary high-order discontinuous Galerkin method." GJI, 2006
+
+### Licenses
+
+- BSD/BSD-like: Polybench, PRK
+- GPL v2.0: KaStORS, BOTS
+- MIT: llama2.c
+- Public Domain: Darknet
+- NASA Open Source: NPB
+
+## Statistics
+
+- Total suites: 12
+- Total benchmarks: 45+
+- Lines of code: ~15,000+
+- File formats: C, C++, MLIR
+- Parallelization: OpenMP (parallel-for, tasks, task dependencies)
 
 ## Contributing
 
-When adding new benchmarks, ensure:
+When adding benchmarks:
 
-1. **No global variables** - Pass all data as parameters
-2. **OpenMP support** - Use standard OpenMP constructs
-3. **Self-contained** - Minimize external dependencies
-4. **Documentation** - Include README.md with:
-   - Algorithm description
-   - Original source and links
-   - Build instructions
-   - Academic citations
-5. **Validation** - Include correctness checks
-6. **Multiple sizes** - Support at least mini/small/standard sizes
+1. Use no global variables
+2. Include OpenMP parallelization
+3. Minimize external dependencies
+4. Provide README with algorithm description and attribution
+5. Include validation/correctness checks
+6. Support multiple problem sizes (small, medium, large)
+7. Follow suite-specific Makefile patterns
 
 ---
 
-## License
-
-See individual benchmark directories for specific license information. Common licenses:
-- **BSD/BSD-like**: Polybench, PRK
-- **GPL v2.0**: KaStORS, BOTS
-- **MIT**: llama2.c
-- **Public Domain**: Darknet
-- **NASA Open Source**: NPB
-
----
-
-## Contact & References
-
-- **CARTS Documentation**: See main CARTS repository
-- **Benchmark Issues**: Report in individual source repositories
-- **Integration Questions**: See CARTS team
-
----
-
-**Last Updated**: November 11, 2025
-**Total Benchmarks**: ~29 unique kernels
-**Total Variants**: ~34 implementations
-**Lines of Code**: ~15,000+
+**Last Updated**: November 23, 2024

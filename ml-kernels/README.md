@@ -119,6 +119,37 @@ global_avgpool(input, output, batch, channels, height, width);
 
 ---
 
+### 3. Layer Normalization (`layernorm/`)
+
+**Source**: Inspired by [PyTorch LayerNorm](https://github.com/pytorch/pytorch)
+
+**Description**: Normalizes each token across the hidden dimension, commonly used in transformers and large language models.
+
+**Algorithm**:
+```
+for b in batch:
+  mean = avg(x[b, :])
+  var = avg((x[b, :] - mean)^2)
+  y[b, :] = ((x[b, :] - mean) / sqrt(var + eps)) * gamma[:] + beta[:]
+```
+
+**Features**:
+- OpenMP parallelism across batch dimension
+- Configurable `BATCH` and `HIDDEN` via `CFLAGS`
+- Affine weights (`gamma`, `beta`) stored per hidden unit
+
+**Build**:
+```bash
+cd layernorm/
+make           # Standard size (16x1024)
+make mini      # 4 x 256 (fast smoke)
+make large     # 64 x 4096 (stress)
+```
+
+**Use cases**: Validate CARTS metadata for reduction-heavy kernels and act as a bridge to more complex transformer blocks.
+
+---
+
 ### 3. Activation Functions (`activations/`)
 
 **Source**: ReLU from Darknet, GELU implemented, Softmax from llama2-transformer
@@ -317,11 +348,11 @@ ml-kernels/
 
 ---
 
-## Integration with Existing CARTS Benchmarks
+## Integration with Existing carts benchmarkss
 
-These ML kernels complement existing CARTS benchmarks:
+These ML kernels complement existing carts benchmarkss:
 
-| ML Kernel | Related CARTS Benchmark | Key Difference |
+| ML Kernel | Related carts benchmarks | Key Difference |
 |-----------|------------------------|----------------|
 | Batch Norm | - | New: channel-wise normalization |
 | Max/Avg Pool | Polybench stencils | Reduction vs weighted sum |
