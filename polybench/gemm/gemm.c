@@ -51,25 +51,17 @@ int main(void) {
   float **A = (float **)malloc(NI * sizeof(float *));
   float **B = (float **)malloc(NK * sizeof(float *));
   float **C = (float **)malloc(NI * sizeof(float *));
-  if (!A || !B || !C) {
-    fprintf(stderr, "alloc failed\n");
-    return 1;
-  }
+  // if (!A || !B || !C) {
+  //   fprintf(stderr, "alloc failed\n");
+  //   return 1;
+  // }
 
   for (int i = 0; i < NI; i++) {
     A[i] = (float *)malloc(NK * sizeof(float));
     C[i] = (float *)malloc(NJ * sizeof(float));
-    if (!A[i] || !C[i]) {
-      fprintf(stderr, "alloc failed\n");
-      return 1;
-    }
   }
   for (int k = 0; k < NK; k++) {
     B[k] = (float *)malloc(NJ * sizeof(float));
-    if (!B[k]) {
-      fprintf(stderr, "alloc failed\n");
-      return 1;
-    }
   }
 
   init(A, B, C);

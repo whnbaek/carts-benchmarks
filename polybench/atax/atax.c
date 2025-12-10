@@ -9,6 +9,7 @@
  */
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -77,17 +78,13 @@ int main(int argc, char **argv) {
   DATA_TYPE *y = (DATA_TYPE *)malloc(ny * sizeof(DATA_TYPE));
   DATA_TYPE *tmp = (DATA_TYPE *)malloc(nx * sizeof(DATA_TYPE));
 
-  if (!A || !x || !y || !tmp) {
-    fprintf(stderr, "Memory allocation failed\n");
-    return 1;
-  }
+  // if (!A || !x || !y || !tmp) {
+  //   fprintf(stderr, "Memory allocation failed\n");
+  //   return 1;
+  // }
 
   for (int i = 0; i < nx; i++) {
     A[i] = (DATA_TYPE *)malloc(ny * sizeof(DATA_TYPE));
-    if (!A[i]) {
-      fprintf(stderr, "Memory allocation failed\n");
-      return 1;
-    }
   }
 
   /* Initialize array(s). */

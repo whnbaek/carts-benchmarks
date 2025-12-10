@@ -77,19 +77,11 @@ int main(void) {
   for (int e = 0; e < N_ELEMENTS; ++e) {
     dofs[e] = (float *)malloc(N_BASIS * sizeof(float));
     fluxOut[e] = (float *)malloc(N_BASIS * sizeof(float));
-    if (!dofs[e] || !fluxOut[e]) {
-      fprintf(stderr, "allocation failure\n");
-      return 1;
-    }
   }
 
   for (int q = 0; q < N_QUAD; ++q) {
     gradMatrix[q] = (float *)malloc(N_BASIS * sizeof(float));
     fluxMatrix[q] = (float *)malloc(N_BASIS * sizeof(float));
-    if (!gradMatrix[q] || !fluxMatrix[q]) {
-      fprintf(stderr, "allocation failure\n");
-      return 1;
-    }
   }
 
   init(dofs, gradMatrix, fluxMatrix);

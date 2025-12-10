@@ -74,10 +74,3 @@ make clean            # Remove build artifacts
 3. [SeisSol GitHub Repository](https://github.com/SeisSol/SeisSol)
 4. [SeisSol Documentation](https://seissol.readthedocs.io/)
 
-## CARTS Compatibility
-
-- No global variables - clean parameter passing
-- OpenMP parallelization with parallel-for
-- Self-contained implementations
-- Well-documented with upstream attribution
-- Multiple problem sizes for scaling studies

@@ -7,6 +7,10 @@
 #define DATA_TYPE double
 #endif
 
+#ifndef DATA_PRINTF_MODIFIER
+#define DATA_PRINTF_MODIFIER "%0.2lf "
+#endif
+
 #ifndef M
 #define M 256
 #endif

@@ -113,24 +113,12 @@ int main(void) {
   for (int c = 0; c < COMP; ++c) {
     u[c] = (float ***)malloc(NX * sizeof(float **));
     rhs[c] = (float ***)malloc(NX * sizeof(float **));
-    if (!u[c] || !rhs[c]) {
-      fprintf(stderr, "allocation failure\n");
-      return 1;
-    }
     for (int i = 0; i < NX; ++i) {
       u[c][i] = (float **)malloc(NY * sizeof(float *));
       rhs[c][i] = (float **)malloc(NY * sizeof(float *));
-      if (!u[c][i] || !rhs[c][i]) {
-        fprintf(stderr, "allocation failure\n");
-        return 1;
-      }
       for (int j = 0; j < NY; ++j) {
         u[c][i][j] = (float *)malloc(NZ * sizeof(float));
         rhs[c][i][j] = (float *)malloc(NZ * sizeof(float));
-        if (!u[c][i][j] || !rhs[c][i][j]) {
-          fprintf(stderr, "allocation failure\n");
-          return 1;
-        }
       }
     }
   }
@@ -138,17 +126,9 @@ int main(void) {
   for (int i = 0; i < NX; ++i) {
     mu[i] = (float **)malloc(NY * sizeof(float *));
     lambda[i] = (float **)malloc(NY * sizeof(float *));
-    if (!mu[i] || !lambda[i]) {
-      fprintf(stderr, "allocation failure\n");
-      return 1;
-    }
     for (int j = 0; j < NY; ++j) {
       mu[i][j] = (float *)malloc(NZ * sizeof(float));
       lambda[i][j] = (float *)malloc(NZ * sizeof(float));
-      if (!mu[i][j] || !lambda[i][j]) {
-        fprintf(stderr, "allocation failure\n");
-        return 1;
-      }
     }
   }
 

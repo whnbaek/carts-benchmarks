@@ -105,41 +105,25 @@ int main(int argc, char **argv) {
   DATA_TYPE **D = (DATA_TYPE **)malloc(nm * sizeof(DATA_TYPE *));
   DATA_TYPE **G = (DATA_TYPE **)malloc(ni * sizeof(DATA_TYPE *));
 
-  if (!E || !A || !B || !F || !C || !D || !G) {
-    fprintf(stderr, "Memory allocation failed\n");
-    return 1;
-  }
+  // if (!E || !A || !B || !F || !C || !D || !G) {
+  //   fprintf(stderr, "Memory allocation failed\n");
+  //   return 1;
+  // }
 
   for (int i = 0; i < ni; i++) {
     E[i] = (DATA_TYPE *)malloc(nj * sizeof(DATA_TYPE));
     A[i] = (DATA_TYPE *)malloc(nk * sizeof(DATA_TYPE));
     G[i] = (DATA_TYPE *)malloc(nl * sizeof(DATA_TYPE));
-    if (!E[i] || !A[i] || !G[i]) {
-      fprintf(stderr, "Memory allocation failed\n");
-      return 1;
-    }
   }
   for (int i = 0; i < nk; i++) {
     B[i] = (DATA_TYPE *)malloc(nj * sizeof(DATA_TYPE));
-    if (!B[i]) {
-      fprintf(stderr, "Memory allocation failed\n");
-      return 1;
-    }
   }
   for (int i = 0; i < nj; i++) {
     F[i] = (DATA_TYPE *)malloc(nl * sizeof(DATA_TYPE));
     C[i] = (DATA_TYPE *)malloc(nm * sizeof(DATA_TYPE));
-    if (!F[i] || !C[i]) {
-      fprintf(stderr, "Memory allocation failed\n");
-      return 1;
-    }
   }
   for (int i = 0; i < nm; i++) {
     D[i] = (DATA_TYPE *)malloc(nl * sizeof(DATA_TYPE));
-    if (!D[i]) {
-      fprintf(stderr, "Memory allocation failed\n");
-      return 1;
-    }
   }
 
   /* Initialize array(s). */

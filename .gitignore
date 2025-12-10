@@ -54,3 +54,19 @@ results/
 **/*.csv
 **/*.tsv
 **/*.dat
+
+# CARTS generated executables
+*_arts
+*_arts_metadata
+*_omp
+
+# CARTS intermediate files
+*.mlir
+*.ll
+
+# Debug/analysis outputs
+counters/
+DbGraph_*.dot
+*.json
+logs/
+build/

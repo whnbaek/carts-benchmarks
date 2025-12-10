@@ -128,11 +128,6 @@ int main(void) {
     sxy[i] = (float **)malloc(NY * sizeof(float *));
     sxz[i] = (float **)malloc(NY * sizeof(float *));
     syz[i] = (float **)malloc(NY * sizeof(float *));
-    if (!vx[i] || !vy[i] || !vz[i] || !rho[i] || !mu[i] || !lambda[i] ||
-        !sxx[i] || !syy[i] || !szz[i] || !sxy[i] || !sxz[i] || !syz[i]) {
-      fprintf(stderr, "allocation failure\n");
-      return 1;
-    }
     for (int j = 0; j < NY; ++j) {
       vx[i][j] = (float *)malloc(NZ * sizeof(float));
       vy[i][j] = (float *)malloc(NZ * sizeof(float));
@@ -146,12 +141,6 @@ int main(void) {
       sxy[i][j] = (float *)malloc(NZ * sizeof(float));
       sxz[i][j] = (float *)malloc(NZ * sizeof(float));
       syz[i][j] = (float *)malloc(NZ * sizeof(float));
-      if (!vx[i][j] || !vy[i][j] || !vz[i][j] || !rho[i][j] || !mu[i][j] ||
-          !lambda[i][j] || !sxx[i][j] || !syy[i][j] || !szz[i][j] ||
-          !sxy[i][j] || !sxz[i][j] || !syz[i][j]) {
-        fprintf(stderr, "allocation failure\n");
-        return 1;
-      }
     }
   }
 

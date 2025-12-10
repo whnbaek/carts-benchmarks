@@ -93,13 +93,6 @@ Three chained matrix multiplications test:
 - Intermediate result management
 - Memory allocation patterns for temporary matrices
 
-## CARTS Compatibility
-
-- No global variables
-- Clean parameter passing
-- OpenMP parallel for
-- Static functions
-
 ## References
 
 - **Polybench Suite**: http://polybench.sourceforge.net/

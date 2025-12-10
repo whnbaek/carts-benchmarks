@@ -34,9 +34,6 @@
 #include <float.h>
 #include <stdio.h>
 #include <stdlib.h>
-#ifdef _OPENMP
-#include <omp.h>
-#endif
 
 // Problem size configuration
 #ifndef BATCH_SIZE
@@ -81,7 +78,7 @@
  *   stride: Stride for pooling window
  *   padding: Padding (typically 0 for pooling)
  */
-void maxpool_forward(float ***input, float ***output, int batch, int channels,
+static void maxpool_forward(float ***input, float ***output, int batch, int channels,
                      int in_height, int in_width, int pool_size, int stride,
                      int padding) {
   // Calculate output dimensions
@@ -95,9 +92,7 @@ void maxpool_forward(float ***input, float ***output, int batch, int channels,
 
   int b, c, i, j, m, n;
 
-#ifdef _OPENMP
-#pragma omp parallel for private(c, i, j, m, n) collapse(2)
-#endif
+#pragma omp parallel for private(c, i, j, m, n)
   for (b = 0; b < batch; ++b) {
     for (c = 0; c < channels; ++c) {
       for (i = 0; i < out_height; ++i) {
@@ -148,7 +143,7 @@ void maxpool_forward(float ***input, float ***output, int batch, int channels,
  *   stride: Stride for pooling window
  *   padding: Padding (typically 0 for pooling)
  */
-void avgpool_forward(float ***input, float ***output, int batch, int channels,
+static void avgpool_forward(float ***input, float ***output, int batch, int channels,
                      int in_height, int in_width, int pool_size, int stride,
                      int padding) {
   // Calculate output dimensions
@@ -162,9 +157,7 @@ void avgpool_forward(float ***input, float ***output, int batch, int channels,
 
   int b, c, i, j, m, n;
 
-#ifdef _OPENMP
-#pragma omp parallel for private(c, i, j, m, n) collapse(2)
-#endif
+#pragma omp parallel for private(c, i, j, m, n)
   for (b = 0; b < batch; ++b) {
     for (c = 0; c < channels; ++c) {
       for (i = 0; i < out_height; ++i) {
@@ -213,14 +206,12 @@ void avgpool_forward(float ***input, float ***output, int batch, int channels,
  *   height: Input height
  *   width: Input width
  */
-void global_avgpool(float ***input, float **output, int batch, int channels,
+static void global_avgpool(float ***input, float **output, int batch, int channels,
                     int height, int width) {
   int spatial_size = height * width;
   int b, c, h, w;
 
-#ifdef _OPENMP
-#pragma omp parallel for private(c, h, w) collapse(2)
-#endif
+#pragma omp parallel for private(c, h, w)
   for (b = 0; b < batch; ++b) {
     for (c = 0; c < channels; ++c) {
       float sum = 0.0f;
@@ -240,7 +231,7 @@ void global_avgpool(float ***input, float **output, int batch, int channels,
 /*
  * Initialize test data
  */
-void init_pooling_data(float ***input, int batch, int channels, int spatial) {
+static void init_pooling_data(float ***input, int batch, int channels, int spatial) {
   int idx = 0;
   for (int b = 0; b < batch; ++b) {
     for (int c = 0; c < channels; ++c) {
@@ -256,7 +247,7 @@ void init_pooling_data(float ***input, int batch, int channels, int spatial) {
 /*
  * Print sample output for validation
  */
-void print_sample(const char *name, float ***data, int batch, int channels,
+static void print_sample(const char *name, float ***data, int batch, int channels,
                   int height, int width, int max_print) {
   printf("\n%s (first %d elements):\n", name, max_print);
   int count = 0;
@@ -310,28 +301,20 @@ int main(int argc, char **argv) {
   float ***avgpool_output = (float ***)malloc(batch * sizeof(float **));
   float **global_output = (float **)malloc(batch * sizeof(float *));
 
-  if (!input || !maxpool_output || !avgpool_output || !global_output) {
-    fprintf(stderr, "Memory allocation failed\n");
-    return 1;
-  }
+  // if (!input || !maxpool_output || !avgpool_output || !global_output) {
+  //   fprintf(stderr, "Memory allocation failed\n");
+  //   return 1;
+  // }
 
   for (int b = 0; b < batch; ++b) {
     input[b] = (float **)malloc(channels * sizeof(float *));
     maxpool_output[b] = (float **)malloc(channels * sizeof(float *));
     avgpool_output[b] = (float **)malloc(channels * sizeof(float *));
     global_output[b] = (float *)malloc(channels * sizeof(float));
-    if (!input[b] || !maxpool_output[b] || !avgpool_output[b] || !global_output[b]) {
-      fprintf(stderr, "Memory allocation failed\n");
-      return 1;
-    }
     for (int c = 0; c < channels; ++c) {
       input[b][c] = (float *)malloc(in_spatial * sizeof(float));
       maxpool_output[b][c] = (float *)malloc(out_spatial * sizeof(float));
       avgpool_output[b][c] = (float *)malloc(out_spatial * sizeof(float));
-      if (!input[b][c] || !maxpool_output[b][c] || !avgpool_output[b][c]) {
-        fprintf(stderr, "Memory allocation failed\n");
-        return 1;
-      }
     }
   }
 

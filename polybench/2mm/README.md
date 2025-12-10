@@ -102,13 +102,6 @@ Two chained matrix multiplications are common in:
 - Linear algebra operations in transformers
 - Multi-layer perceptron computations
 
-## CARTS Compatibility
-
-- No global variables
-- Clean parameter passing
-- OpenMP parallel for
-- Static functions
-
 ## References
 
 - **Polybench Suite**: http://polybench.sourceforge.net/

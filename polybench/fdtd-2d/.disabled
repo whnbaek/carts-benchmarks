@@ -1,0 +1,21 @@
+# fdtd-2d test disabled
+#
+# Reason: Nested arts.for inside parallel EDT not yet supported.
+#
+# The fdtd-2d benchmark has the following structure:
+#   arts.edt<parallel> {
+#     scf.for t = 0 to TMAX {      // Sequential time-stepping
+#       arts.for { ... }           // Nested - NOT at top level
+#       arts.for { ... }
+#       arts.for { ... }
+#       arts.for { ... }
+#     }
+#   }
+#
+# The ForLowering pass currently only handles arts.for at the top level
+# of the parallel EDT body. Supporting nested arts.for requires:
+#   1. Tracing to parallel block args (not db_alloc) for datablock access
+#   2. Creating db_acquire without guid (lowers to depDbAcquire)
+#   3. For reductions: wrapper EDT approach (TBD)
+#
+# See plan file for detailed analysis.

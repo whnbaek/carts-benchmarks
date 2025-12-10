@@ -11,20 +11,11 @@
  *   - Leaky ReLU: max(0.1x, x)
  *   - GELU: Gaussian Error Linear Unit (used in transformers)
  *   - Softmax: Converts scores to probabilities (from llama2)
- *
- * CARTS Compatibility:
- * - No global variables
- * - Clean parameter passing
- * - OpenMP parallelization
- * - Element-wise operations
  */
 
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
-#ifdef _OPENMP
-#include <omp.h>
-#endif
 
 // Problem size configuration
 #ifndef SIZE
@@ -41,11 +32,9 @@
  *   x: Input/output array (modified in-place)
  *   n: Number of elements
  */
-void activate_relu(float *x, int n) {
+static void activate_relu(float *x, int n) {
   int i;
-#ifdef _OPENMP
 #pragma omp parallel for
-#endif
   for (i = 0; i < n; ++i) {
     x[i] = (x[i] > 0) ? x[i] : 0;
   }
@@ -61,11 +50,9 @@ void activate_relu(float *x, int n) {
  *   x: Input/output array (modified in-place)
  *   n: Number of elements
  */
-void activate_leaky(float *x, int n) {
+static void activate_leaky(float *x, int n) {
   int i;
-#ifdef _OPENMP
 #pragma omp parallel for
-#endif
   for (i = 0; i < n; ++i) {
     x[i] = (x[i] > 0) ? x[i] : 0.1f * x[i];
   }
@@ -81,11 +68,9 @@ void activate_leaky(float *x, int n) {
  *   x: Input/output array (modified in-place)
  *   n: Number of elements
  */
-void activate_relu6(float *x, int n) {
+static void activate_relu6(float *x, int n) {
   int i;
-#ifdef _OPENMP
 #pragma omp parallel for
-#endif
   for (i = 0; i < n; ++i) {
     float val = x[i];
     val = (val > 0) ? val : 0;
@@ -106,14 +91,12 @@ void activate_relu6(float *x, int n) {
  *   x: Input/output array (modified in-place)
  *   n: Number of elements
  */
-void activate_gelu(float *x, int n) {
+static void activate_gelu(float *x, int n) {
   const float sqrt_2_over_pi = 0.7978845608f; // sqrt(2/π)
   const float coeff = 0.044715f;
 
   int i;
-#ifdef _OPENMP
 #pragma omp parallel for
-#endif
   for (i = 0; i < n; ++i) {
     float val = x[i];
     float cube = val * val * val;
@@ -134,11 +117,9 @@ void activate_gelu(float *x, int n) {
  *   x: Input/output array (modified in-place)
  *   n: Number of elements
  */
-void activate_gelu_fast(float *x, int n) {
+static void activate_gelu_fast(float *x, int n) {
   int i;
-#ifdef _OPENMP
 #pragma omp parallel for
-#endif
   for (i = 0; i < n; ++i) {
     float val = x[i];
     // sigmoid(1.702 * x) = 1 / (1 + exp(-1.702 * x))
@@ -157,11 +138,9 @@ void activate_gelu_fast(float *x, int n) {
  *   x: Input/output array (modified in-place)
  *   n: Number of elements
  */
-void activate_sigmoid(float *x, int n) {
+static void activate_sigmoid(float *x, int n) {
   int i;
-#ifdef _OPENMP
 #pragma omp parallel for
-#endif
   for (i = 0; i < n; ++i) {
     x[i] = 1.0f / (1.0f + expf(-x[i]));
   }
@@ -177,11 +156,9 @@ void activate_sigmoid(float *x, int n) {
  *   x: Input/output array (modified in-place)
  *   n: Number of elements
  */
-void activate_tanh(float *x, int n) {
+static void activate_tanh(float *x, int n) {
   int i;
-#ifdef _OPENMP
 #pragma omp parallel for
-#endif
   for (i = 0; i < n; ++i) {
     x[i] = tanhf(x[i]);
   }
@@ -197,7 +174,7 @@ void activate_tanh(float *x, int n) {
  *   x: Input/output array (modified in-place)
  *   n: Number of elements
  */
-void softmax(float *x, int n) {
+static void softmax(float *x, int n) {
   int i;
 
   // Find max value (for numerical stability)
@@ -224,7 +201,7 @@ void softmax(float *x, int n) {
 /*
  * Initialize test data with range covering negative and positive values
  */
-void init_data(float *x, int n) {
+static void init_data(float *x, int n) {
   int i;
   for (i = 0; i < n; ++i) {
     // Range from -3 to 3
@@ -235,7 +212,7 @@ void init_data(float *x, int n) {
 /*
  * Copy array
  */
-void copy_array(float *dst, float *src, int n) {
+static void copy_array(float *dst, float *src, int n) {
   int i;
   for (i = 0; i < n; ++i) {
     dst[i] = src[i];
@@ -245,7 +222,7 @@ void copy_array(float *dst, float *src, int n) {
 /*
  * Print statistics
  */
-void print_stats(const char *name, float *x, int n, int print_samples) {
+static void print_stats(const char *name, float *x, int n, int print_samples) {
   // Compute min, max, mean
   float min_val = x[0];
   float max_val = x[0];
@@ -290,10 +267,10 @@ int main(int argc, char **argv) {
   float *output = (float *)malloc(size * sizeof(float));
   float *softmax_input = (float *)malloc(softmax_size * sizeof(float));
 
-  if (!input || !output || !softmax_input) {
-    fprintf(stderr, "Memory allocation failed\n");
-    return 1;
-  }
+  // if (!input || !output || !softmax_input) {
+  //   fprintf(stderr, "Memory allocation failed\n");
+  //   return 1;
+  // }
 
   // Initialize data
   init_data(input, size);
@@ -356,7 +333,7 @@ int main(int argc, char **argv) {
   }
   printf("  Softmax sum (should be 1.0): %.10f\n", softmax_sum);
 
-  if (fabsf(softmax_sum - 1.0) < 0.0001) {
+  if (fabs(softmax_sum - 1.0) < 0.0001) {
     printf("  Softmax validation passed\n");
   } else {
     printf("  Softmax validation failed\n");

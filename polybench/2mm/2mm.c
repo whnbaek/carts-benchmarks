@@ -9,6 +9,7 @@
  */
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -18,6 +19,16 @@
 /* Include benchmark-specific header. */
 /* Default data type is double, default size is 4000. */
 #include "2mm.h"
+
+static void free_matrix(DATA_TYPE **matrix, int rows) {
+  if (!matrix) {
+    return;
+  }
+  for (int i = 0; i < rows; i++) {
+    free(matrix[i]);
+  }
+  free(matrix);
+}
 
 /* Array initialization. */
 static void init_array(int ni, int nj, int nk, int nl, DATA_TYPE *alpha,
@@ -106,34 +117,27 @@ int main(int argc, char **argv) {
   DATA_TYPE **B = (DATA_TYPE **)malloc(nk * sizeof(DATA_TYPE *));
   DATA_TYPE **C = (DATA_TYPE **)malloc(nl * sizeof(DATA_TYPE *));
   DATA_TYPE **D = (DATA_TYPE **)malloc(ni * sizeof(DATA_TYPE *));
-  
-  if (!tmp || !A || !B || !C || !D) {
-    fprintf(stderr, "Memory allocation failed\n");
-    return 1;
-  }
-  
+
+  // if (!tmp || !A || !B || !C || !D) {
+  //   fprintf(stderr, "Memory allocation failed\n");
+  //   free_matrix(tmp, ni);
+  //   free_matrix(A, ni);
+  //   free_matrix(B, nk);
+  //   free_matrix(C, nl);
+  //   free_matrix(D, ni);
+  //   return 1;
+  // }
+
   for (int i = 0; i < ni; i++) {
     tmp[i] = (DATA_TYPE *)malloc(nj * sizeof(DATA_TYPE));
     A[i] = (DATA_TYPE *)malloc(nk * sizeof(DATA_TYPE));
     D[i] = (DATA_TYPE *)malloc(nl * sizeof(DATA_TYPE));
-    if (!tmp[i] || !A[i] || !D[i]) {
-      fprintf(stderr, "Memory allocation failed\n");
-      return 1;
-    }
   }
   for (int i = 0; i < nk; i++) {
     B[i] = (DATA_TYPE *)malloc(nj * sizeof(DATA_TYPE));
-    if (!B[i]) {
-      fprintf(stderr, "Memory allocation failed\n");
-      return 1;
-    }
   }
   for (int i = 0; i < nl; i++) {
     C[i] = (DATA_TYPE *)malloc(nj * sizeof(DATA_TYPE));
-    if (!C[i]) {
-      fprintf(stderr, "Memory allocation failed\n");
-      return 1;
-    }
   }
 
   /* Initialize array(s). */
@@ -154,22 +158,11 @@ int main(int argc, char **argv) {
   polybench_prevent_dce(print_array(ni, nl, D));
 
   /* Be clean. */
-  for (int i = 0; i < ni; i++) {
-    free(tmp[i]);
-    free(A[i]);
-    free(D[i]);
-  }
-  for (int i = 0; i < nk; i++) {
-    free(B[i]);
-  }
-  for (int i = 0; i < nl; i++) {
-    free(C[i]);
-  }
-  free(tmp);
-  free(A);
-  free(B);
-  free(C);
-  free(D);
+  free_matrix(tmp, ni);
+  free_matrix(A, ni);
+  free_matrix(B, nk);
+  free_matrix(C, nl);
+  free_matrix(D, ni);
 
   return 0;
 }

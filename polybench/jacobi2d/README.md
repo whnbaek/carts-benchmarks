@@ -99,14 +99,6 @@ Jacobi iteration patterns appear in:
 - Relaxation methods in graph neural networks
 - Numerical solvers used in physics-informed neural networks
 
-## CARTS Compatibility
-
-- No global variables
-- Clean parameter passing
-- OpenMP parallel for
-- Static functions
-- 5-point stencil pattern
-
 ## References
 
 - **Polybench Suite**: http://polybench.sourceforge.net/

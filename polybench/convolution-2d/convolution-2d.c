@@ -4,13 +4,13 @@
  *
  * Contact:
  * William Killian <killian@udel.edu>
- * 
+ *
  * Copyright 2013, The University of Delaware
  */
-#include <stdio.h>
-#include <unistd.h>
-#include <string.h>
 #include <math.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
 
 /* Include polybench common header. */
 #include <polybench.h>
@@ -19,27 +19,19 @@
 /* Default data type is double, default size is 4096x4096. */
 #include "convolution-2d.h"
 
-
 /* Array initialization. */
-static
-void init_array (int ni, int nj,
-		 DATA_TYPE **A)
-{
+static void init_array(int ni, int nj, DATA_TYPE **A) {
   int i, j;
 
   for (i = 0; i < ni; i++)
-    for (j = 0; j < nj; j++)
-      {
-	A[i][j] = ((DATA_TYPE) (i + j) / nj);
-      }
+    for (j = 0; j < nj; j++) {
+      A[i][j] = ((DATA_TYPE)(i + j) / nj);
+    }
 }
-
 
 /* DCE code. Must scan the entire live-out data.
    Can be used also to check the correctness of the output. */
-static
-void print_array(int ni, int nj,
-		 DATA_TYPE **B)
+static void print_array(int ni, int nj, DATA_TYPE **B)
 
 {
   int i, j;
@@ -47,38 +39,31 @@ void print_array(int ni, int nj,
   for (i = 0; i < ni; i++)
     for (j = 0; j < nj; j++) {
       fprintf(stderr, DATA_PRINTF_MODIFIER, B[i][j]);
-      if ((i * NJ + j) % 20 == 0) fprintf(stderr, "\n");
+      if ((i * NJ + j) % 20 == 0)
+        fprintf(stderr, "\n");
     }
   fprintf(stderr, "\n");
 }
 
-
 /* Main computational kernel. The whole function will be timed,
    including the call and return. */
-static
-void kernel_conv2d(int ni,
-		   int nj,
-		   DATA_TYPE **A,
-		   DATA_TYPE **B)
-{
+static void kernel_conv2d(int ni, int nj, DATA_TYPE **A, DATA_TYPE **B) {
   int i, j;
-  #pragma scop
-  #pragma omp parallel for private(j) collapse(2) schedule(static)
-  for (i = 1; i < _PB_NI - 1; ++i)
-  {
-    for (j = 1; j < _PB_NJ - 1; ++j)
-    {
-	    B[i][j] =  0.2 * A[i-1][j-1] + 0.5 * A[i-1][j] + -0.8 * A[i-1][j+1]
-              + -0.3 * A[ i ][j-1] + 0.6 * A[ i ][j] + -0.9 * A[ i ][j+1]
-              +  0.4 * A[i+1][j-1] + 0.7 * A[i+1][j] +  0.1 * A[i+1][j+1];
+#pragma scop
+// NOTE: collapse(2) not yet supported by CARTS - using nested parallel for
+#pragma omp parallel for private(j) schedule(static)
+  for (i = 1; i < _PB_NI - 1; ++i) {
+    for (j = 1; j < _PB_NJ - 1; ++j) {
+      B[i][j] = 0.2 * A[i - 1][j - 1] + 0.5 * A[i - 1][j] +
+                -0.8 * A[i - 1][j + 1] + -0.3 * A[i][j - 1] + 0.6 * A[i][j] +
+                -0.9 * A[i][j + 1] + 0.4 * A[i + 1][j - 1] + 0.7 * A[i + 1][j] +
+                0.1 * A[i + 1][j + 1];
     }
   }
-  #pragma endscop
+#pragma endscop
 }
 
-
-int main(int argc, char** argv)
-{
+int main(int argc, char **argv) {
   /* Retrieve problem size. */
   int ni = NI;
   int nj = NJ;
@@ -86,34 +71,30 @@ int main(int argc, char** argv)
   /* Variable declaration/allocation. */
   DATA_TYPE **A = (DATA_TYPE **)malloc(ni * sizeof(DATA_TYPE *));
   DATA_TYPE **B = (DATA_TYPE **)malloc(ni * sizeof(DATA_TYPE *));
-  
-  if (!A || !B) {
-    fprintf(stderr, "Memory allocation failed\n");
-    return 1;
-  }
-  
+
+  // if (!A || !B) {
+  //   fprintf(stderr, "Memory allocation failed\n");
+  //   return 1;
+  // }
+
   for (int i = 0; i < ni; i++) {
     A[i] = (DATA_TYPE *)malloc(nj * sizeof(DATA_TYPE));
     B[i] = (DATA_TYPE *)malloc(nj * sizeof(DATA_TYPE));
-    if (!A[i] || !B[i]) {
-      fprintf(stderr, "Memory allocation failed\n");
-      return 1;
-    }
   }
 
   /* Initialize array(s). */
-  init_array (ni, nj, A);
-  
+  init_array(ni, nj, A);
+
   /* Start timer. */
   polybench_start_instruments;
 
   /* Run kernel. */
-  kernel_conv2d (ni, nj, A, B);
+  kernel_conv2d(ni, nj, A, B);
 
   /* Stop and print timer. */
   polybench_stop_instruments;
   polybench_print_instruments;
-  
+
   /* Prevent dead-code elimination. All live-out data must be printed
      by the function call in argument. */
   polybench_prevent_dce(print_array(ni, nj, B));
@@ -125,6 +106,6 @@ int main(int argc, char** argv)
   }
   free(A);
   free(B);
-  
+
   return 0;
 }

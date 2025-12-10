@@ -1,11 +1,11 @@
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include "correlation.h"
 
-static void print_array(int m, int n,
-                        DATA_TYPE **corr,
-                        const char *name) {
+static void print_array(int m, int n, DATA_TYPE **corr, const char *name) {
   (void)name;
   for (int i = 0; i < m; i++) {
     for (int j = 0; j < n; j++) {
@@ -18,8 +18,7 @@ static void print_array(int m, int n,
   fprintf(stderr, "\n");
 }
 
-static void init_array(int m, int n,
-                       DATA_TYPE **data) {
+static void init_array(int m, int n, DATA_TYPE **data) {
   for (int i = 0; i < m; i++) {
     for (int j = 0; j < n; j++) {
       data[i][j] = (DATA_TYPE)(i * j) / (DATA_TYPE)M + (DATA_TYPE)i / (j + 1);
@@ -27,11 +26,8 @@ static void init_array(int m, int n,
   }
 }
 
-static void kernel_correlation(
-    int m, int n, DATA_TYPE **data,
-    DATA_TYPE **corr,
-    DATA_TYPE *mean,
-    DATA_TYPE *stddev) {
+static void kernel_correlation(int m, int n, DATA_TYPE **data, DATA_TYPE **corr,
+                               DATA_TYPE *mean, DATA_TYPE *stddev) {
   /* Step 1: compute mean of each row. */
   for (int i = 0; i < m; i++) {
     mean[i] = 0.0;
@@ -57,8 +53,7 @@ static void kernel_correlation(
   /* Step 3: center and scale the data. */
   for (int i = 0; i < m; i++) {
     for (int j = 0; j < n; j++) {
-      data[i][j] =
-          (data[i][j] - mean[i]) / (sqrt(FLOAT_N) * stddev[i]);
+      data[i][j] = (data[i][j] - mean[i]) / (sqrt(FLOAT_N) * stddev[i]);
     }
   }
 
@@ -84,19 +79,15 @@ int main(int argc, char **argv) {
   DATA_TYPE **corr = (DATA_TYPE **)malloc(m * sizeof(DATA_TYPE *));
   DATA_TYPE *mean = (DATA_TYPE *)malloc(m * sizeof(DATA_TYPE));
   DATA_TYPE *stddev = (DATA_TYPE *)malloc(m * sizeof(DATA_TYPE));
-  
-  if (!data || !corr || !mean || !stddev) {
-    fprintf(stderr, "Memory allocation failed\n");
-    return 1;
-  }
-  
+
+  // if (!data || !corr || !mean || !stddev) {
+  //   fprintf(stderr, "Memory allocation failed\n");
+  //   return 1;
+  // }
+
   for (int i = 0; i < m; i++) {
     data[i] = (DATA_TYPE *)malloc(n * sizeof(DATA_TYPE));
     corr[i] = (DATA_TYPE *)malloc(m * sizeof(DATA_TYPE));
-    if (!data[i] || !corr[i]) {
-      fprintf(stderr, "Memory allocation failed\n");
-      return 1;
-    }
   }
 
   init_array(m, n, data);

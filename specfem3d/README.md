@@ -78,10 +78,3 @@ make clean            # Remove build artifacts
 2. [SPECFEM3D GitHub Repository](https://github.com/SPECFEM/specfem3d)
 3. [SPECFEM3D User Manual](https://specfem3d.readthedocs.io/)
 
-## CARTS Compatibility
-
-- No global variables - clean parameter passing
-- OpenMP parallelization with parallel-for
-- Self-contained implementations
-- Well-documented with upstream attribution
-- Multiple problem sizes for scaling studies

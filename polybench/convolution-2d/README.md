@@ -85,13 +85,6 @@ make clean
 - Most common filter size in practice (3×3)
 - Used in: ResNet, VGG, MobileNet, etc.
 
-## CARTS Compatibility
-
-- No global variables
-- Clean parameter passing
-- OpenMP with collapse(2)
-- 9-point stencil pattern
-
 ## References
 
 - **Repository**: https://github.com/cavazos-lab/PolyBench-ACC

@@ -83,13 +83,6 @@ make clean
 - Point cloud processing
 - Action recognition in videos
 
-## CARTS Compatibility
-
-- No global variables
-- Clean parameter passing
-- OpenMP parallel with collapse(2)
-- 27-point stencil pattern
-
 ## References
 
 - **Repository**: https://github.com/cavazos-lab/PolyBench-ACC

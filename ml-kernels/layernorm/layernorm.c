@@ -1,5 +1,4 @@
 #include <math.h>
-#include <omp.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -74,10 +73,6 @@ int main(void) {
 
   for (int b = 0; b < BATCH; ++b) {
     x[b] = (float *)malloc(HIDDEN * sizeof(float));
-    if (!x[b]) {
-      fprintf(stderr, "allocation failure\n");
-      return 1;
-    }
   }
 
   init(x, gamma, beta);
