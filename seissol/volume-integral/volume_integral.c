@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "arts/Utils/Benchmarks/CartsBenchmarks.h"
 
 #ifndef N_ELEMENTS
 #define N_ELEMENTS 64
@@ -52,16 +53,6 @@ static void seissol_volume_integral(float **fluxOut,
   }
 }
 
-static float checksum(const float **fluxOut) {
-  float s = 0.0f;
-  for (int e = 0; e < N_ELEMENTS; ++e) {
-    for (int b = 0; b < N_BASIS; ++b) {
-      s += fluxOut[e][b];
-    }
-  }
-  return s;
-}
-
 int main(void) {
   // Allocate 2D arrays
   float **dofs = (float **)malloc(N_ELEMENTS * sizeof(float *));
@@ -85,9 +76,19 @@ int main(void) {
   }
 
   init(dofs, gradMatrix, fluxMatrix);
-  seissol_volume_integral(fluxOut, dofs, gradMatrix, fluxMatrix);
 
-  printf("seissol_volume_integral checksum=%f\n", checksum(fluxOut));
+  CARTS_KERNEL_TIMER_START("seissol_volume_integral");
+  seissol_volume_integral(fluxOut, dofs, gradMatrix, fluxMatrix);
+  CARTS_KERNEL_TIMER_STOP("seissol_volume_integral");
+
+  // Compute checksum inline
+  float checksum = 0.0f;
+  for (int e = 0; e < N_ELEMENTS; ++e) {
+    for (int b = 0; b < N_BASIS; ++b) {
+      checksum += fluxOut[e][b];
+    }
+  }
+  CARTS_BENCH_CHECKSUM(checksum);
 
   for (int e = 0; e < N_ELEMENTS; ++e) {
     free(dofs[e]);

@@ -18,6 +18,7 @@
 /* Include benchmark-specific header. */
 /* Default data type is double, default size is 50x1000x1000. */
 #include "fdtd-2d.h"
+#include "arts/Utils/Benchmarks/CartsBenchmarks.h"
 
 /* Array initialization. */
 static void init_array(int tmax, int nx, int ny, DATA_TYPE **ex, DATA_TYPE **ey,
@@ -111,11 +112,24 @@ int main(int argc, char **argv) {
   polybench_start_instruments;
 
   /* Run kernel. */
+  CARTS_KERNEL_TIMER_START("kernel_fdtd_2d");
   kernel_fdtd_2d(tmax, nx, ny, ex, ey, hz, _fict_);
+  CARTS_KERNEL_TIMER_STOP("kernel_fdtd_2d");
 
   /* Stop and print timer. */
   polybench_stop_instruments;
   polybench_print_instruments;
+
+  /* Compute checksum inline (CARTS limitation: no helper functions) */
+  double checksum = 0.0;
+  for (int i = 0; i < nx; i++) {
+    for (int j = 0; j < ny; j++) {
+      checksum += ex[i][j];
+      checksum += ey[i][j];
+      checksum += hz[i][j];
+    }
+  }
+  CARTS_BENCH_CHECKSUM(checksum);
 
   /* Prevent dead-code elimination. All live-out data must be printed
      by the function call in argument. */

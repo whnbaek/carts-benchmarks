@@ -18,6 +18,7 @@
 /* Include benchmark-specific header. */
 /* Default data type is double, default size is 4000. */
 #include "3mm.h"
+#include "arts/Utils/Benchmarks/CartsBenchmarks.h"
 
 /* Array initialization. */
 static void init_array(int ni, int nj, int nk, int nl, int nm, DATA_TYPE **A,
@@ -86,6 +87,7 @@ static void kernel_3mm(int ni, int nj, int nk, int nl, int nm, DATA_TYPE **E,
           G[i][j] += E[i][k] * F[k][j];
       }
   }
+#pragma endscop
 }
 
 int main(int argc, char **argv) {
@@ -104,11 +106,6 @@ int main(int argc, char **argv) {
   DATA_TYPE **C = (DATA_TYPE **)malloc(nj * sizeof(DATA_TYPE *));
   DATA_TYPE **D = (DATA_TYPE **)malloc(nm * sizeof(DATA_TYPE *));
   DATA_TYPE **G = (DATA_TYPE **)malloc(ni * sizeof(DATA_TYPE *));
-
-  // if (!E || !A || !B || !F || !C || !D || !G) {
-  //   fprintf(stderr, "Memory allocation failed\n");
-  //   return 1;
-  // }
 
   for (int i = 0; i < ni; i++) {
     E[i] = (DATA_TYPE *)malloc(nj * sizeof(DATA_TYPE));
@@ -133,11 +130,22 @@ int main(int argc, char **argv) {
   polybench_start_instruments;
 
   /* Run kernel. */
+  CARTS_KERNEL_TIMER_START("kernel_3mm");
   kernel_3mm(ni, nj, nk, nl, nm, E, A, B, F, C, D, G);
+  CARTS_KERNEL_TIMER_STOP("kernel_3mm");
 
   /* Stop and print timer. */
   polybench_stop_instruments;
   polybench_print_instruments;
+
+  /* Compute checksum inline */
+  double checksum = 0.0;
+  for (int i = 0; i < ni; i++) {
+    for (int j = 0; j < nl; j++) {
+      checksum += G[i][j];
+    }
+  }
+  CARTS_BENCH_CHECKSUM(checksum);
 
   /* Prevent dead-code elimination. All live-out data must be printed
      by the function call in argument. */

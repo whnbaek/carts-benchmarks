@@ -12,6 +12,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "arts/Utils/Benchmarks/CartsBenchmarks.h"
 
 #ifndef SIZE
 #define SIZE 100
@@ -152,7 +153,9 @@ int main(void) {
   }
 
   printf("Running task-based sweep...\n");
+  CARTS_KERNEL_TIMER_START("sweep");
   sweep(nx, ny, dx, dy, f, itold, itnew, u, unew);
+  CARTS_KERNEL_TIMER_STOP("sweep");
 
   // Save result
   for (int i = 0; i < nx; i++) {
@@ -183,6 +186,15 @@ int main(void) {
   error = sqrt(error / (nx * ny));
 
   printf("Verification: %s (RMS: %.2e)\n", (error < 1e-6) ? "PASS" : "FAIL", error);
+
+  // Output checksum (sum of unew_seq which is the task-based result)
+  double checksum = 0.0;
+  for (int i = 0; i < nx; i++) {
+    for (int j = 0; j < ny; j++) {
+      checksum += unew_seq[i][j];
+    }
+  }
+  CARTS_BENCH_CHECKSUM(checksum);
 
   // Cleanup
   for (int i = 0; i < nx; i++) {

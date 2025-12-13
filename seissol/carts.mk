@@ -2,9 +2,8 @@
 # SeisSol defaults layered on top of the shared CARTS pipeline.
 ################################################################################
 
-SEISSOL_TEMPLATE_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
-SEISSOL_ROOT := $(abspath $(SEISSOL_TEMPLATE_DIR)/..)
-CARTS_BENCH_ROOT := $(abspath $(SEISSOL_ROOT)/..)
+SEISSOL_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
+BENCHMARKS_ROOT := $(abspath $(SEISSOL_ROOT)/..)
 SEISSOL_INCLUDES ?= -I$(SEISSOL_ROOT)/common
 
 SEQ_FLAGS ?= --print-debug-info --raise-scf-to-affine -O0 -S $(SEISSOL_INCLUDES) $(CFLAGS)
@@ -21,14 +20,14 @@ endif
 
 small:
 	@echo "[$(EXAMPLE_NAME)] Building with SMALL size (1000 elements)"
-	$(MAKE) all CFLAGS="-DNELEM=1000 $(EXTRA_CFLAGS)"
+	$(MAKE) all openmp CFLAGS="-DNELEM=1000 $(EXTRA_CFLAGS)"
 
 medium:
 	@echo "[$(EXAMPLE_NAME)] Building with MEDIUM size (10000 elements)"
-	$(MAKE) all CFLAGS="-DNELEM=10000 $(EXTRA_CFLAGS)"
+	$(MAKE) all openmp CFLAGS="-DNELEM=10000 $(EXTRA_CFLAGS)"
 
 large:
 	@echo "[$(EXAMPLE_NAME)] Building with LARGE size (100000 elements)"
-	$(MAKE) all CFLAGS="-DNELEM=100000 $(EXTRA_CFLAGS)"
+	$(MAKE) all openmp CFLAGS="-DNELEM=100000 $(EXTRA_CFLAGS)"
 
-include $(CARTS_BENCH_ROOT)/common/carts-pipeline.mk
+include $(BENCHMARKS_ROOT)/common/carts.mk

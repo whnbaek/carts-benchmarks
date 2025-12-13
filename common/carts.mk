@@ -40,7 +40,7 @@ else
   ARTS_CFG_NOTICE = @:
 endif
 
-.PHONY: all seq metadata parallel concurrency concurrency-opt openmp clean
+.PHONY: all seq metadata parallel concurrency concurrency-opt clean
 
 all: seq metadata parallel concurrency concurrency-opt
 
@@ -67,14 +67,16 @@ concurrency-opt: $(PAR_MLIR) $(METADATA) | $(LOG_DIR)
 # Standard OpenMP compilation (no ARTS transformation)
 # Usage: make openmp or carts benchmarks <name> --openmp
 OMP_BINARY ?= $(BUILD_DIR)/$(EXAMPLE_NAME)_omp
-OMP_FLAGS ?= -fopenmp -O3 $(CFLAGS) -lm
+OMP_FLAGS ?= -fopenmp -O3 $(CFLAGS) -lm -lcartsbenchmarks
 
-openmp: $(SRC) $(PIPELINE_DEPS) | $(BUILD_DIR) $(LOG_DIR)
+# Make openmp a proper file target to avoid rebuilding when binary exists
+$(OMP_BINARY): $(SRC) $(PIPELINE_DEPS) | $(BUILD_DIR) $(LOG_DIR)
 	@echo "[$(EXAMPLE_NAME)] Compiling with standard OpenMP -> $(OMP_BINARY)"
 	@$(CARTS) clang $(SRC) $(OMP_FLAGS) -o $(OMP_BINARY) 2>&1 | tee $(LOG_DIR)/openmp.log; \
 	exit $${PIPESTATUS[0]}
-	@echo "[$(EXAMPLE_NAME)] Running OpenMP binary..."
-	@$(OMP_BINARY)
+
+# Alias target for convenience
+openmp: $(OMP_BINARY)
 
 $(SEQ_MLIR): $(SRC) $(PIPELINE_DEPS) | $(BUILD_DIR) $(LOG_DIR)
 	@echo "[$(EXAMPLE_NAME)] Generating sequential MLIR -> $@"

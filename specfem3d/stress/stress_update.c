@@ -1,6 +1,7 @@
 #include <omp.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "arts/Utils/Benchmarks/CartsBenchmarks.h"
 
 #ifndef NX
 #define NX 40
@@ -28,41 +29,41 @@ static void init(float ***vx, float ***vy, float ***vz, float ***rho,
         rho[i][j][k] = 2500.0f + (float)(idx % 7);
         mu[i][j][k] = 30.0f + 0.05f * (float)(idx % 11);
         lambda[i][j][k] = 20.0f + 0.04f * (float)(idx % 13);
-        sxx[i][j][k] = syy[i][j][k] = szz[i][j][k] = sxy[i][j][k] = sxz[i][j][k] = syz[i][j][k] = 0.0f;
+        sxx[i][j][k] = syy[i][j][k] = szz[i][j][k] = sxy[i][j][k] =
+            sxz[i][j][k] = syz[i][j][k] = 0.0f;
         idx++;
       }
     }
   }
 }
 
-static inline float derivative(const float ***arr, int i, int j, int k,
-                               int dir) {
-  switch (dir) {
-  case 0:
-    return 0.5f * (arr[i + 1][j][k] - arr[i - 1][j][k]);
-  case 1:
-    return 0.5f * (arr[i][j + 1][k] - arr[i][j - 1][k]);
-  default:
-    return 0.5f * (arr[i][j][k + 1] - arr[i][j][k - 1]);
-  }
+static inline float derivative_x(const float ***arr, int i, int j, int k) {
+  return 0.5f * (arr[i + 1][j][k] - arr[i - 1][j][k]);
 }
 
-static void specfem3d_update_stress(
-    float ***sxx, float ***syy, float ***szz,
-    float ***sxy, float ***sxz, float ***syz,
-    const float ***vx, const float ***vy,
-    const float ***vz, const float ***mu,
-    const float ***lambda) {
-#pragma omp parallel for collapse(2) schedule(static)
+static inline float derivative_y(const float ***arr, int i, int j, int k) {
+  return 0.5f * (arr[i][j + 1][k] - arr[i][j - 1][k]);
+}
+
+static inline float derivative_z(const float ***arr, int i, int j, int k) {
+  return 0.5f * (arr[i][j][k + 1] - arr[i][j][k - 1]);
+}
+
+static void specfem3d_update_stress(float ***sxx, float ***syy, float ***szz,
+                                    float ***sxy, float ***sxz, float ***syz,
+                                    const float ***vx, const float ***vy,
+                                    const float ***vz, const float ***mu,
+                                    const float ***lambda) {
+#pragma omp parallel for schedule(static)
   for (int k = 2; k < NZ - 2; ++k) {
     for (int j = 2; j < NY - 2; ++j) {
       for (int i = 2; i < NX - 2; ++i) {
         const float mu_c = mu[i][j][k];
         const float la_c = lambda[i][j][k];
 
-        const float dvx_dx = derivative(vx, i, j, k, 0);
-        const float dvy_dy = derivative(vy, i, j, k, 1);
-        const float dvz_dz = derivative(vz, i, j, k, 2);
+        const float dvx_dx = derivative_x(vx, i, j, k);
+        const float dvy_dy = derivative_y(vy, i, j, k);
+        const float dvz_dz = derivative_z(vz, i, j, k);
 
         const float trace = dvx_dx + dvy_dy + dvz_dz;
         const float two_mu = 2.0f * mu_c;
@@ -71,27 +72,15 @@ static void specfem3d_update_stress(
         syy[i][j][k] += DT * (two_mu * dvy_dy + la_c * trace);
         szz[i][j][k] += DT * (two_mu * dvz_dz + la_c * trace);
 
-        sxy[i][j][k] += DT * mu_c * (derivative(vx, i, j, k, 1) +
-                                     derivative(vy, i, j, k, 0));
-        sxz[i][j][k] += DT * mu_c * (derivative(vx, i, j, k, 2) +
-                                     derivative(vz, i, j, k, 0));
-        syz[i][j][k] += DT * mu_c * (derivative(vy, i, j, k, 2) +
-                                     derivative(vz, i, j, k, 1));
+        sxy[i][j][k] +=
+            DT * mu_c * (derivative_y(vx, i, j, k) + derivative_x(vy, i, j, k));
+        sxz[i][j][k] +=
+            DT * mu_c * (derivative_z(vx, i, j, k) + derivative_x(vz, i, j, k));
+        syz[i][j][k] +=
+            DT * mu_c * (derivative_z(vy, i, j, k) + derivative_y(vz, i, j, k));
       }
     }
   }
-}
-
-static float checksum(const float ***arr) {
-  float sum = 0.0f;
-  for (int i = 0; i < NX; ++i) {
-    for (int j = 0; j < NY; ++j) {
-      for (int k = 0; k < NZ; ++k) {
-        sum += arr[i][j][k];
-      }
-    }
-  }
-  return sum;
 }
 
 int main(void) {
@@ -108,12 +97,6 @@ int main(void) {
   float ***sxy = (float ***)malloc(NX * sizeof(float **));
   float ***sxz = (float ***)malloc(NX * sizeof(float **));
   float ***syz = (float ***)malloc(NX * sizeof(float **));
-
-  if (!vx || !vy || !vz || !rho || !mu || !lambda || !sxx || !syy || !szz ||
-      !sxy || !sxz || !syz) {
-    fprintf(stderr, "allocation failure\n");
-    return 1;
-  }
 
   for (int i = 0; i < NX; ++i) {
     vx[i] = (float **)malloc(NY * sizeof(float *));
@@ -145,12 +128,22 @@ int main(void) {
   }
 
   init(vx, vy, vz, rho, mu, lambda, sxx, syy, szz, sxy, sxz, syz);
-  specfem3d_update_stress(sxx, syy, szz, sxy, sxz, syz, vx, vy, vz, mu,
-                          lambda);
 
-  printf("specfem3d_stress checksum=%f\n",
-         checksum(sxx) + checksum(syy) + checksum(szz) +
-             checksum(sxy) + checksum(sxz) + checksum(syz));
+  CARTS_KERNEL_TIMER_START("specfem3d_update_stress");
+  specfem3d_update_stress(sxx, syy, szz, sxy, sxz, syz, vx, vy, vz, mu, lambda);
+  CARTS_KERNEL_TIMER_STOP("specfem3d_update_stress");
+
+  // Compute checksum inline
+  float checksum = 0.0f;
+  for (int i = 0; i < NX; ++i) {
+    for (int j = 0; j < NY; ++j) {
+      for (int k = 0; k < NZ; ++k) {
+        checksum += sxx[i][j][k] + syy[i][j][k] + szz[i][j][k] +
+                    sxy[i][j][k] + sxz[i][j][k] + syz[i][j][k];
+      }
+    }
+  }
+  CARTS_BENCH_CHECKSUM(checksum);
 
   // Free 3D arrays
   for (int i = 0; i < NX; ++i) {

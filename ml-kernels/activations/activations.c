@@ -16,6 +16,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "arts/Utils/Benchmarks/CartsBenchmarks.h"
 
 // Problem size configuration
 #ifndef SIZE
@@ -267,11 +268,6 @@ int main(int argc, char **argv) {
   float *output = (float *)malloc(size * sizeof(float));
   float *softmax_input = (float *)malloc(softmax_size * sizeof(float));
 
-  // if (!input || !output || !softmax_input) {
-  //   fprintf(stderr, "Memory allocation failed\n");
-  //   return 1;
-  // }
-
   // Initialize data
   init_data(input, size);
   init_data(softmax_input, softmax_size);
@@ -282,49 +278,121 @@ int main(int argc, char **argv) {
   // Test ReLU
   printf("\n--- Testing ReLU ---\n");
   copy_array(output, input, size);
+  CARTS_KERNEL_TIMER_START("relu");
   activate_relu(output, size);
+  CARTS_KERNEL_TIMER_STOP("relu");
   print_stats("ReLU Output", output, size, 10);
+
+  // Compute checksum inline
+  double relu_checksum = 0.0;
+  for (int i = 0; i < size; i++) {
+    relu_checksum += output[i];
+  }
+  CARTS_BENCH_CHECKSUM(relu_checksum);
 
   // Test Leaky ReLU
   printf("\n--- Testing Leaky ReLU ---\n");
   copy_array(output, input, size);
+  CARTS_KERNEL_TIMER_START("leaky_relu");
   activate_leaky(output, size);
+  CARTS_KERNEL_TIMER_STOP("leaky_relu");
   print_stats("Leaky ReLU Output", output, size, 10);
+
+  // Compute checksum inline
+  double leaky_checksum = 0.0;
+  for (int i = 0; i < size; i++) {
+    leaky_checksum += output[i];
+  }
+  CARTS_BENCH_CHECKSUM(leaky_checksum);
 
   // Test ReLU6
   printf("\n--- Testing ReLU6 ---\n");
   copy_array(output, input, size);
+  CARTS_KERNEL_TIMER_START("relu6");
   activate_relu6(output, size);
+  CARTS_KERNEL_TIMER_STOP("relu6");
   print_stats("ReLU6 Output", output, size, 10);
+
+  // Compute checksum inline
+  double relu6_checksum = 0.0;
+  for (int i = 0; i < size; i++) {
+    relu6_checksum += output[i];
+  }
+  CARTS_BENCH_CHECKSUM(relu6_checksum);
 
   // Test GELU
   printf("\n--- Testing GELU ---\n");
   copy_array(output, input, size);
+  CARTS_KERNEL_TIMER_START("gelu");
   activate_gelu(output, size);
+  CARTS_KERNEL_TIMER_STOP("gelu");
   print_stats("GELU Output", output, size, 10);
+
+  // Compute checksum inline
+  double gelu_checksum = 0.0;
+  for (int i = 0; i < size; i++) {
+    gelu_checksum += output[i];
+  }
+  CARTS_BENCH_CHECKSUM(gelu_checksum);
 
   // Test GELU Fast
   printf("\n--- Testing GELU (Fast) ---\n");
   copy_array(output, input, size);
+  CARTS_KERNEL_TIMER_START("gelu_fast");
   activate_gelu_fast(output, size);
+  CARTS_KERNEL_TIMER_STOP("gelu_fast");
   print_stats("GELU Fast Output", output, size, 10);
+
+  // Compute checksum inline
+  double gelu_fast_checksum = 0.0;
+  for (int i = 0; i < size; i++) {
+    gelu_fast_checksum += output[i];
+  }
+  CARTS_BENCH_CHECKSUM(gelu_fast_checksum);
 
   // Test Sigmoid
   printf("\n--- Testing Sigmoid ---\n");
   copy_array(output, input, size);
+  CARTS_KERNEL_TIMER_START("sigmoid");
   activate_sigmoid(output, size);
+  CARTS_KERNEL_TIMER_STOP("sigmoid");
   print_stats("Sigmoid Output", output, size, 10);
+
+  // Compute checksum inline
+  double sigmoid_checksum = 0.0;
+  for (int i = 0; i < size; i++) {
+    sigmoid_checksum += output[i];
+  }
+  CARTS_BENCH_CHECKSUM(sigmoid_checksum);
 
   // Test Tanh
   printf("\n--- Testing Tanh ---\n");
   copy_array(output, input, size);
+  CARTS_KERNEL_TIMER_START("tanh");
   activate_tanh(output, size);
+  CARTS_KERNEL_TIMER_STOP("tanh");
   print_stats("Tanh Output", output, size, 10);
+
+  // Compute checksum inline
+  double tanh_checksum = 0.0;
+  for (int i = 0; i < size; i++) {
+    tanh_checksum += output[i];
+  }
+  CARTS_BENCH_CHECKSUM(tanh_checksum);
 
   // Test Softmax
   printf("\n--- Testing Softmax ---\n");
+  CARTS_KERNEL_TIMER_START("softmax");
   softmax(softmax_input, softmax_size);
+  CARTS_KERNEL_TIMER_STOP("softmax");
   print_stats("Softmax Output", softmax_input, softmax_size, 10);
+
+  // Compute checksum inline
+  double softmax_checksum = 0.0;
+  for (int i = 0; i < softmax_size; i++) {
+    softmax_checksum += softmax_input[i];
+  }
+  CARTS_BENCH_CHECKSUM(softmax_checksum);
 
   // Validate Softmax (should sum to 1)
   double softmax_sum = 0.0;
@@ -340,6 +408,11 @@ int main(int argc, char **argv) {
   }
 
   printf("\nAll activation functions completed successfully!\n");
+
+  double final_checksum = relu_checksum + leaky_checksum + relu6_checksum +
+                          gelu_checksum + gelu_fast_checksum + sigmoid_checksum +
+                          tanh_checksum + softmax_checksum;
+  CARTS_BENCH_CHECKSUM(final_checksum);
 
   // Cleanup
   free(input);

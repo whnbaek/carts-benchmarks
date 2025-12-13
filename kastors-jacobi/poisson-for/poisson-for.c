@@ -9,6 +9,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "arts/Utils/Benchmarks/CartsBenchmarks.h"
 
 static void sweep(int nx, int ny, double dx, double dy, double **f, int itold,
                   int itnew, double **u, double **unew, int block_size) {
@@ -115,7 +116,18 @@ int main(void) {
     }
   }
 
+  CARTS_KERNEL_TIMER_START("sweep");
   sweep(nx, ny, dx, dy, f, itold, itnew, u, unew, block_size);
+  CARTS_KERNEL_TIMER_STOP("sweep");
+
+  // Compute checksum inline
+  double checksum = 0.0;
+  for (int i = 0; i < nx; i++) {
+    for (int j = 0; j < ny; j++) {
+      checksum += unew[i][j];
+    }
+  }
+  CARTS_BENCH_CHECKSUM(checksum);
 
   // Free 2D arrays
   for (int i = 0; i < nx; i++) {

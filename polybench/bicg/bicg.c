@@ -19,6 +19,7 @@
 /* Include benchmark-specific header. */
 /* Default data type is double, default size is 4000. */
 #include "bicg.h"
+#include "arts/Utils/Benchmarks/CartsBenchmarks.h"
 
 /* Array initialization. */
 static void init_array(int nx, int ny, DATA_TYPE **A, DATA_TYPE *r,
@@ -60,19 +61,20 @@ static void kernel_bicg(int nx, int ny, DATA_TYPE **A, DATA_TYPE *s,
                         DATA_TYPE *q, DATA_TYPE *p, DATA_TYPE *r) {
   int i, j;
 #pragma scop
-#pragma omp parallel
-  {
-#pragma omp for
-    for (i = 0; i < _PB_NY; i++)
-      s[i] = 0;
-#pragma omp for private(j)
-    for (i = 0; i < _PB_NX; i++) {
-      q[i] = 0;
-      for (j = 0; j < _PB_NY; j++) {
-        s[j] = s[j] + r[i] * A[i][j];
-        q[i] = q[i] + A[i][j] * p[j];
-      }
-    }
+  /* Step 1: q = A * p */
+#pragma omp parallel for private(j)
+  for (i = 0; i < _PB_NX; i++) {
+    q[i] = 0;
+    for (j = 0; j < _PB_NY; j++)
+      q[i] = q[i] + A[i][j] * p[j];
+  }
+
+  /* Step 2: s = A^T * r */
+#pragma omp parallel for private(i)
+  for (j = 0; j < _PB_NY; j++) {
+    s[j] = 0;
+    for (i = 0; i < _PB_NX; i++)
+      s[j] = s[j] + r[i] * A[i][j];
   }
 #pragma endscop
 }
@@ -105,11 +107,23 @@ int main(int argc, char **argv) {
   polybench_start_instruments;
 
   /* Run kernel. */
+  CARTS_KERNEL_TIMER_START("kernel_bicg");
   kernel_bicg(nx, ny, A, s, q, p, r);
+  CARTS_KERNEL_TIMER_STOP("kernel_bicg");
 
   /* Stop and print timer. */
   polybench_stop_instruments;
   polybench_print_instruments;
+
+  /* Compute checksum inline */
+  double checksum = 0.0;
+  for (int i = 0; i < ny; i++) {
+    checksum += s[i];
+  }
+  for (int i = 0; i < nx; i++) {
+    checksum += q[i];
+  }
+  CARTS_BENCH_CHECKSUM(checksum);
 
   /* Prevent dead-code elimination. All live-out data must be printed
      by the function call in argument. */

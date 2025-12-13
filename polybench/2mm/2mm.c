@@ -19,6 +19,7 @@
 /* Include benchmark-specific header. */
 /* Default data type is double, default size is 4000. */
 #include "2mm.h"
+#include "arts/Utils/Benchmarks/CartsBenchmarks.h"
 
 static void free_matrix(DATA_TYPE **matrix, int rows) {
   if (!matrix) {
@@ -118,16 +119,6 @@ int main(int argc, char **argv) {
   DATA_TYPE **C = (DATA_TYPE **)malloc(nl * sizeof(DATA_TYPE *));
   DATA_TYPE **D = (DATA_TYPE **)malloc(ni * sizeof(DATA_TYPE *));
 
-  // if (!tmp || !A || !B || !C || !D) {
-  //   fprintf(stderr, "Memory allocation failed\n");
-  //   free_matrix(tmp, ni);
-  //   free_matrix(A, ni);
-  //   free_matrix(B, nk);
-  //   free_matrix(C, nl);
-  //   free_matrix(D, ni);
-  //   return 1;
-  // }
-
   for (int i = 0; i < ni; i++) {
     tmp[i] = (DATA_TYPE *)malloc(nj * sizeof(DATA_TYPE));
     A[i] = (DATA_TYPE *)malloc(nk * sizeof(DATA_TYPE));
@@ -147,11 +138,22 @@ int main(int argc, char **argv) {
   polybench_start_instruments;
 
   /* Run kernel. */
+  CARTS_KERNEL_TIMER_START("kernel_2mm");
   kernel_2mm(ni, nj, nk, nl, alpha, beta, tmp, A, B, C, D);
+  CARTS_KERNEL_TIMER_STOP("kernel_2mm");
 
   /* Stop and print timer. */
   polybench_stop_instruments;
   polybench_print_instruments;
+
+  /* Compute checksum inline */
+  double checksum = 0.0;
+  for (int i = 0; i < ni; i++) {
+    for (int j = 0; j < nl; j++) {
+      checksum += D[i][j];
+    }
+  }
+  CARTS_BENCH_CHECKSUM(checksum);
 
   /* Prevent dead-code elimination. All live-out data must be printed
      by the function call in argument. */

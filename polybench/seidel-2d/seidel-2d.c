@@ -1,108 +1,64 @@
-/* POLYBENCH/GPU-OPENMP
- *
- * This file is a part of the Polybench/GPU-OpenMP suite
- *
- * Contact:
- * William Killian <killian@udel.edu>
- *
- * Copyright 2013, The University of Delaware
+/* POLYBENCH - Seidel 2D
  */
-#include <math.h>
+#include <omp.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
+#include "arts/Utils/Benchmarks/CartsBenchmarks.h"
 
-/* Include polybench common header. */
-#include <polybench.h>
-
-/* Include benchmark-specific header. */
-/* Default data type is double, default size is 20x1000. */
-#include "seidel-2d.h"
-
-/* Array initialization. */
-static void init_array(int n, DATA_TYPE **A) {
-  int i, j;
-
-  for (i = 0; i < n; i++)
-    for (j = 0; j < n; j++)
-      A[i][j] = ((DATA_TYPE)i * (j + 2) + 2) / n;
-}
-
-/* DCE code. Must scan the entire live-out data.
-   Can be used also to check the correctness of the output. */
-static void print_array(int n, DATA_TYPE **A)
-
-{
-  int i, j;
-
-  for (i = 0; i < n; i++)
-    for (j = 0; j < n; j++) {
-      fprintf(stderr, DATA_PRINTF_MODIFIER, A[i][j]);
-      if ((i * n + j) % 20 == 0)
-        fprintf(stderr, "\n");
-    }
-  fprintf(stderr, "\n");
-}
-
-/* Main computational kernel. The whole function will be timed,
-   including the call and return. */
-static void kernel_seidel_2d(int tsteps, int n, DATA_TYPE **A) {
-  int t, i, j;
-
-#pragma scop
-#pragma omp parallel private(t, i, j)
-  {
-    for (t = 0; t <= _PB_TSTEPS - 1; t++) {
-#pragma omp for schedule(static)
-      for (i = 1; i <= _PB_N - 2; i++) {
-        for (j = 1; j <= _PB_N - 2; j++) {
-          A[i][j] = (A[i - 1][j - 1] + A[i - 1][j] + A[i - 1][j + 1] +
-                     A[i][j - 1] + A[i][j] + A[i][j + 1] + A[i + 1][j - 1] +
-                     A[i + 1][j] + A[i + 1][j + 1]) /
-                    9.0;
-        }
-      }
-    }
-  }
-#pragma endscop
-}
+#ifndef N
+#define N 1000
+#endif
+#ifndef TSTEPS
+#define TSTEPS 20
+#endif
+#ifndef DATA_TYPE
+#define DATA_TYPE double
+#endif
 
 int main(int argc, char **argv) {
-  /* Retrieve problem size. */
   int n = N;
   int tsteps = TSTEPS;
 
-  /* Variable declaration/allocation. */
+  /* Pointer-to-pointer allocation */
   DATA_TYPE **A = (DATA_TYPE **)malloc(n * sizeof(DATA_TYPE *));
-
-  if (!A) {
-    fprintf(stderr, "Memory allocation failed\n");
-    return 1;
-  }
-
   for (int i = 0; i < n; i++) {
     A[i] = (DATA_TYPE *)malloc(n * sizeof(DATA_TYPE));
   }
 
-  /* Initialize array(s). */
-  init_array(n, A);
+  /* Initialize array inline */
+  for (int i = 0; i < n; i++) {
+    for (int j = 0; j < n; j++) {
+      A[i][j] = ((DATA_TYPE)i * (j + 2) + 2) / n;
+    }
+  }
 
-  /* Start timer. */
-  polybench_start_instruments;
+  CARTS_KERNEL_TIMER_START("kernel_seidel_2d");
 
-  /* Run kernel. */
-  kernel_seidel_2d(tsteps, n, A);
+  /* Seidel-2D kernel - j loop is sequential due to A[i][j-1] dependency */
+  for (int t = 0; t < tsteps; t++) {
+#pragma omp parallel for schedule(static)
+    for (int i = 1; i < n - 1; i++) {
+      for (int j = 1; j < n - 1; j++) {
+        A[i][j] = (A[i - 1][j - 1] + A[i - 1][j] + A[i - 1][j + 1] +
+                   A[i][j - 1] + A[i][j] + A[i][j + 1] + A[i + 1][j - 1] +
+                   A[i + 1][j] + A[i + 1][j + 1]) /
+                  9.0;
+      }
+    }
+  }
 
-  /* Stop and print timer. */
-  polybench_stop_instruments;
-  polybench_print_instruments;
+  CARTS_KERNEL_TIMER_STOP("kernel_seidel_2d");
 
-  /* Prevent dead-code elimination. All live-out data must be printed
-     by the function call in argument. */
-  polybench_prevent_dce(print_array(n, A));
+  /* Compute checksum */
+  double checksum = 0.0;
+  for (int i = 0; i < n; i++) {
+    for (int j = 0; j < n; j++) {
+      checksum += A[i][j];
+    }
+  }
+  CARTS_BENCH_CHECKSUM(checksum);
 
-  /* Be clean. */
+  /* Free arrays */
   for (int i = 0; i < n; i++) {
     free(A[i]);
   }

@@ -23,17 +23,12 @@
  * Typical configurations:
  *   - 2x2 pooling, stride 2: Halves spatial dimensions
  *   - 3x3 pooling, stride 2: Common in older architectures
- *
- * CARTS Compatibility:
- * - No global variables
- * - Clean parameter passing
- * - OpenMP parallelization
- * - Self-contained functions
  */
 
 #include <float.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "arts/Utils/Benchmarks/CartsBenchmarks.h"
 
 // Problem size configuration
 #ifndef BATCH_SIZE
@@ -301,11 +296,6 @@ int main(int argc, char **argv) {
   float ***avgpool_output = (float ***)malloc(batch * sizeof(float **));
   float **global_output = (float **)malloc(batch * sizeof(float *));
 
-  // if (!input || !maxpool_output || !avgpool_output || !global_output) {
-  //   fprintf(stderr, "Memory allocation failed\n");
-  //   return 1;
-  // }
-
   for (int b = 0; b < batch; ++b) {
     input[b] = (float **)malloc(channels * sizeof(float *));
     maxpool_output[b] = (float **)malloc(channels * sizeof(float *));
@@ -323,17 +313,54 @@ int main(int argc, char **argv) {
 
   // Run max pooling
   printf("Running max pooling...\n");
+  CARTS_KERNEL_TIMER_START("maxpool");
   maxpool_forward(input, maxpool_output, batch, channels, in_height, in_width,
                   pool_size, stride, padding);
+  CARTS_KERNEL_TIMER_STOP("maxpool");
+
+  // Compute checksum inline
+  double maxpool_checksum = 0.0;
+  for (int b = 0; b < batch; b++) {
+    for (int c = 0; c < channels; c++) {
+      for (int s = 0; s < out_spatial; s++) {
+        maxpool_checksum += maxpool_output[b][c][s];
+      }
+    }
+  }
+  CARTS_BENCH_CHECKSUM(maxpool_checksum);
 
   // Run average pooling
   printf("Running average pooling...\n");
+  CARTS_KERNEL_TIMER_START("avgpool");
   avgpool_forward(input, avgpool_output, batch, channels, in_height, in_width,
                   pool_size, stride, padding);
+  CARTS_KERNEL_TIMER_STOP("avgpool");
+
+  // Compute checksum inline
+  double avgpool_checksum = 0.0;
+  for (int b = 0; b < batch; b++) {
+    for (int c = 0; c < channels; c++) {
+      for (int s = 0; s < out_spatial; s++) {
+        avgpool_checksum += avgpool_output[b][c][s];
+      }
+    }
+  }
+  CARTS_BENCH_CHECKSUM(avgpool_checksum);
 
   // Run global average pooling
   printf("Running global average pooling...\n");
+  CARTS_KERNEL_TIMER_START("global_avgpool");
   global_avgpool(input, global_output, batch, channels, in_height, in_width);
+  CARTS_KERNEL_TIMER_STOP("global_avgpool");
+
+  // Compute checksum inline
+  double global_avgpool_checksum = 0.0;
+  for (int b = 0; b < batch; b++) {
+    for (int c = 0; c < channels; c++) {
+      global_avgpool_checksum += global_output[b][c];
+    }
+  }
+  CARTS_BENCH_CHECKSUM(global_avgpool_checksum);
 
   // Print samples
   print_sample("Input", input, batch, channels, in_height, in_width, 20);
@@ -364,12 +391,15 @@ int main(int argc, char **argv) {
   }
 
   if (violations == 0) {
-    printf("  ✓ Max pool >= Avg pool for all elements (as expected)\n");
+    printf("  [OK] Max pool >= Avg pool for all elements (as expected)\n");
   } else {
-    printf("  ✗ Found %d violations where max < avg\n", violations);
+    printf("  [FAIL] Found %d violations where max < avg\n", violations);
   }
 
   printf("\nPooling operations completed successfully!\n");
+
+  double final_checksum = maxpool_checksum + avgpool_checksum + global_avgpool_checksum;
+  CARTS_BENCH_CHECKSUM(final_checksum);
 
   // Cleanup
   for (int b = 0; b < batch; ++b) {

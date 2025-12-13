@@ -19,6 +19,7 @@
 /* Include benchmark-specific header. */
 /* Default data type is double, default size is 4000. */
 #include "atax.h"
+#include "arts/Utils/Benchmarks/CartsBenchmarks.h"
 
 /* Array initialization. */
 static void init_array(int nx, int ny, DATA_TYPE **A, DATA_TYPE *x) {
@@ -50,19 +51,20 @@ static void kernel_atax(int nx, int ny, DATA_TYPE **A, DATA_TYPE *x,
                         DATA_TYPE *y, DATA_TYPE *tmp) {
   int i, j;
 #pragma scop
-#pragma omp parallel
-  {
-#pragma omp for
-    for (i = 0; i < _PB_NY; i++)
-      y[i] = 0;
-#pragma omp for private(j)
-    for (i = 0; i < _PB_NX; i++) {
-      tmp[i] = 0;
-      for (j = 0; j < _PB_NY; j++)
-        tmp[i] = tmp[i] + A[i][j] * x[j];
-      for (j = 0; j < _PB_NY; j++)
-        y[j] = y[j] + A[i][j] * tmp[i];
-    }
+  /* Step 1: tmp = A * x */
+#pragma omp parallel for private(j)
+  for (i = 0; i < _PB_NX; i++) {
+    tmp[i] = 0;
+    for (j = 0; j < _PB_NY; j++)
+      tmp[i] = tmp[i] + A[i][j] * x[j];
+  }
+
+  /* Step 2: y = A^T * tmp */
+#pragma omp parallel for private(i)
+  for (j = 0; j < _PB_NY; j++) {
+    y[j] = 0;
+    for (i = 0; i < _PB_NX; i++)
+      y[j] = y[j] + A[i][j] * tmp[i];
   }
 #pragma endscop
 }
@@ -78,11 +80,6 @@ int main(int argc, char **argv) {
   DATA_TYPE *y = (DATA_TYPE *)malloc(ny * sizeof(DATA_TYPE));
   DATA_TYPE *tmp = (DATA_TYPE *)malloc(nx * sizeof(DATA_TYPE));
 
-  // if (!A || !x || !y || !tmp) {
-  //   fprintf(stderr, "Memory allocation failed\n");
-  //   return 1;
-  // }
-
   for (int i = 0; i < nx; i++) {
     A[i] = (DATA_TYPE *)malloc(ny * sizeof(DATA_TYPE));
   }
@@ -94,11 +91,20 @@ int main(int argc, char **argv) {
   polybench_start_instruments;
 
   /* Run kernel. */
+  CARTS_KERNEL_TIMER_START("kernel_atax");
   kernel_atax(nx, ny, A, x, y, tmp);
+  CARTS_KERNEL_TIMER_STOP("kernel_atax");
 
   /* Stop and print timer. */
   polybench_stop_instruments;
   polybench_print_instruments;
+
+  /* Compute checksum inline */
+  double checksum = 0.0;
+  for (int i = 0; i < ny; i++) {
+    checksum += y[i];
+  }
+  CARTS_BENCH_CHECKSUM(checksum);
 
   /* Prevent dead-code elimination. All live-out data must be printed
      by the function call in argument. */

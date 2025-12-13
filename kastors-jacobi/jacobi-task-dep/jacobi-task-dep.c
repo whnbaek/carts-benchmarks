@@ -1,6 +1,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "arts/Utils/Benchmarks/CartsBenchmarks.h"
 
 // Sequential version of sweep for verification
 static void sweep_seq(int nx, int ny, double dx, double dy, double **f,
@@ -85,20 +86,11 @@ int main(void) {
   double **unew = (double **)malloc(nx * sizeof(double *));
   double **unew_seq = (double **)malloc(nx * sizeof(double *));
 
-  // if (!f || !u || !unew || !unew_seq) {
-  //   fprintf(stderr, "Memory allocation failed\n");
-  //   return 1;
-  // }
-
   for (int i = 0; i < nx; i++) {
     f[i] = (double *)malloc(ny * sizeof(double));
     u[i] = (double *)malloc(ny * sizeof(double));
     unew[i] = (double *)malloc(ny * sizeof(double));
     unew_seq[i] = (double *)malloc(ny * sizeof(double));
-    // if (!f[i] || !u[i] || !unew[i] || !unew_seq[i]) {
-    //   fprintf(stderr, "Memory allocation failed\n");
-    //   return 1;
-    // }
   }
 
   // Initialize arrays
@@ -112,7 +104,9 @@ int main(void) {
   }
 
   printf("Running parallel version with task dependencies...\n");
+  CARTS_KERNEL_TIMER_START("sweep");
   sweep(nx, ny, dx, dy, f, itold, itnew, u, unew, block_size);
+  CARTS_KERNEL_TIMER_STOP("sweep");
 
   // Save parallel result
   for (int i = 0; i < nx; i++) {
@@ -144,6 +138,15 @@ int main(void) {
 
   printf("Verification: %s (RMS error: %.2e)\n",
          (error < 1e-6) ? "PASS" : "FAIL", error);
+
+  // Compute checksum inline (sum of parallel result)
+  double checksum = 0.0;
+  for (int i = 0; i < nx; i++) {
+    for (int j = 0; j < ny; j++) {
+      checksum += unew_seq[i][j];
+    }
+  }
+  CARTS_BENCH_CHECKSUM(checksum);
 
   // Free 2D arrays
   for (int i = 0; i < nx; i++) {

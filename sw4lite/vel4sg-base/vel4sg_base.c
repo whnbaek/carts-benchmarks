@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include "arts/Utils/Benchmarks/CartsBenchmarks.h"
 
 #ifndef NX
 #define NX 48
@@ -38,16 +39,16 @@ static void init(float ***vx, float ***vy, float ***vz, float ***rho, float ***s
   }
 }
 
-static inline float derivative(const float ***arr, int i, int j, int k,
-                               int dir) {
-  switch (dir) {
-  case 0:
-    return 0.5f * (arr[i + 1][j][k] - arr[i - 1][j][k]);
-  case 1:
-    return 0.5f * (arr[i][j + 1][k] - arr[i][j - 1][k]);
-  default:
-    return 0.5f * (arr[i][j][k + 1] - arr[i][j][k - 1]);
-  }
+static inline float derivative_x(const float ***arr, int i, int j, int k) {
+  return 0.5f * (arr[i + 1][j][k] - arr[i - 1][j][k]);
+}
+
+static inline float derivative_y(const float ***arr, int i, int j, int k) {
+  return 0.5f * (arr[i][j + 1][k] - arr[i][j - 1][k]);
+}
+
+static inline float derivative_z(const float ***arr, int i, int j, int k) {
+  return 0.5f * (arr[i][j][k + 1] - arr[i][j][k - 1]);
 }
 
 static void sw4lite_vel4sg_update(float ***vx, float ***vy,
@@ -59,21 +60,21 @@ static void sw4lite_vel4sg_update(float ***vx, float ***vy,
                                   const float ***sxy,
                                   const float ***sxz,
                                   const float ***syz) {
-#pragma omp parallel for collapse(2) schedule(static)
+#pragma omp parallel for schedule(static)
   for (int k = 2; k < NZ - 2; ++k) {
     for (int j = 2; j < NY - 2; ++j) {
       for (int i = 2; i < NX - 2; ++i) {
         const float inv_rho = 1.0f / rho[i][j][k];
 
-        const float div_vx = derivative(sxx, i, j, k, 0) +
-                             derivative(sxy, i, j, k, 1) +
-                             derivative(sxz, i, j, k, 2);
-        const float div_vy = derivative(sxy, i, j, k, 0) +
-                             derivative(syy, i, j, k, 1) +
-                             derivative(syz, i, j, k, 2);
-        const float div_vz = derivative(sxz, i, j, k, 0) +
-                             derivative(syz, i, j, k, 1) +
-                             derivative(szz, i, j, k, 2);
+        const float div_vx = derivative_x(sxx, i, j, k) +
+                             derivative_y(sxy, i, j, k) +
+                             derivative_z(sxz, i, j, k);
+        const float div_vy = derivative_x(sxy, i, j, k) +
+                             derivative_y(syy, i, j, k) +
+                             derivative_z(syz, i, j, k);
+        const float div_vz = derivative_x(sxz, i, j, k) +
+                             derivative_y(syz, i, j, k) +
+                             derivative_z(szz, i, j, k);
 
         vx[i][j][k] += DT * inv_rho * div_vx;
         vy[i][j][k] += DT * inv_rho * div_vy;
@@ -81,18 +82,6 @@ static void sw4lite_vel4sg_update(float ***vx, float ***vy,
       }
     }
   }
-}
-
-static float checksum(const float ***vx, const float ***vy, const float ***vz) {
-  float sum = 0.0f;
-  for (int i = 0; i < NX; ++i) {
-    for (int j = 0; j < NY; ++j) {
-      for (int k = 0; k < NZ; ++k) {
-        sum += vx[i][j][k] + vy[i][j][k] + vz[i][j][k];
-      }
-    }
-  }
-  return sum;
 }
 
 int main(void) {
@@ -107,12 +96,6 @@ int main(void) {
   float ***sxy = (float ***)malloc(NX * sizeof(float **));
   float ***sxz = (float ***)malloc(NX * sizeof(float **));
   float ***syz = (float ***)malloc(NX * sizeof(float **));
-
-  if (!vx || !vy || !vz || !rho || !sxx || !syy || !szz || !sxy || !sxz ||
-      !syz) {
-    fprintf(stderr, "allocation failure\n");
-    return 1;
-  }
 
   for (int i = 0; i < NX; ++i) {
     vx[i] = (float **)malloc(NY * sizeof(float *));
@@ -140,9 +123,21 @@ int main(void) {
   }
 
   init(vx, vy, vz, rho, sxx, syy, szz, sxy, sxz, syz);
-  sw4lite_vel4sg_update(vx, vy, vz, rho, sxx, syy, szz, sxy, sxz, syz);
 
-  printf("sw4lite_vel4sg_base checksum=%f\n", checksum(vx, vy, vz));
+  CARTS_KERNEL_TIMER_START("sw4lite_vel4sg_update");
+  sw4lite_vel4sg_update(vx, vy, vz, rho, sxx, syy, szz, sxy, sxz, syz);
+  CARTS_KERNEL_TIMER_STOP("sw4lite_vel4sg_update");
+
+  // Compute checksum inline
+  float checksum = 0.0f;
+  for (int i = 0; i < NX; ++i) {
+    for (int j = 0; j < NY; ++j) {
+      for (int k = 0; k < NZ; ++k) {
+        checksum += vx[i][j][k] + vy[i][j][k] + vz[i][j][k];
+      }
+    }
+  }
+  CARTS_BENCH_CHECKSUM(checksum);
 
   // Free 3D arrays
   for (int i = 0; i < NX; ++i) {

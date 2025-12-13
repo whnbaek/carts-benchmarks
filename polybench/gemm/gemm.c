@@ -3,6 +3,7 @@
 #include <omp.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "arts/Utils/Benchmarks/CartsBenchmarks.h"
 
 #ifndef NI
 #define NI 512
@@ -51,10 +52,6 @@ int main(void) {
   float **A = (float **)malloc(NI * sizeof(float *));
   float **B = (float **)malloc(NK * sizeof(float *));
   float **C = (float **)malloc(NI * sizeof(float *));
-  // if (!A || !B || !C) {
-  //   fprintf(stderr, "alloc failed\n");
-  //   return 1;
-  // }
 
   for (int i = 0; i < NI; i++) {
     A[i] = (float *)malloc(NK * sizeof(float));
@@ -65,8 +62,19 @@ int main(void) {
   }
 
   init(A, B, C);
+
+  CARTS_KERNEL_TIMER_START("gemm");
   gemm(C, (const float **)A, (const float **)B, 1.0f, 0.0f);
-  printf("checksum=%.6f\n", checksum(C));
+  CARTS_KERNEL_TIMER_STOP("gemm");
+
+  // Compute checksum inline
+  double checksum = 0.0;
+  for (int i = 0; i < NI; i++) {
+    for (int j = 0; j < NJ; j++) {
+      checksum += C[i][j];
+    }
+  }
+  CARTS_BENCH_CHECKSUM(checksum);
 
   for (int i = 0; i < NI; i++) {
     free(A[i]);

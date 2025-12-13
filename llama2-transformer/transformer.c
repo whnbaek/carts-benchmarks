@@ -4,6 +4,7 @@
 #include <omp.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "arts/Utils/Benchmarks/CartsBenchmarks.h"
 
 #define DIM 64
 #define HIDDEN_DIM 256
@@ -17,41 +18,50 @@
 #define KV_MUL (N_HEADS / N_KV_HEADS)
 #define HEAD_SIZE (DIM / N_HEADS)
 
-typedef struct {
-  float token_embedding_table[VOCAB_SIZE * DIM];
-  float rms_att_weight[N_LAYERS * DIM];
-  float rms_ffn_weight[N_LAYERS * DIM];
-  float wq[N_LAYERS * DIM * DIM];
-  float wk[N_LAYERS * DIM * KV_DIM];
-  float wv[N_LAYERS * DIM * KV_DIM];
-  float wo[N_LAYERS * DIM * DIM];
-  float w1[N_LAYERS * DIM * HIDDEN_DIM];
-  float w2[N_LAYERS * HIDDEN_DIM * DIM];
-  float w3[N_LAYERS * DIM * HIDDEN_DIM];
-  float rms_final_weight[DIM];
-} TransformerModel;
+// ============================================================================
+// Memory allocation helpers 
+// ============================================================================
 
-typedef struct {
-  float x[DIM];
-  float xb[DIM];
-  float xb2[DIM];
-  float hb[HIDDEN_DIM];
-  float hb2[HIDDEN_DIM];
-  float q_buf[DIM];
-  float att_buf[N_HEADS * SEQ_LEN];
-  float logits[VOCAB_SIZE];
-  float key_cache[N_LAYERS * SEQ_LEN * KV_DIM];
-  float value_cache[N_LAYERS * SEQ_LEN * KV_DIM];
-} TransformerState;
+static float **alloc_2d(int rows, int cols) {
+  float **arr = (float **)malloc(rows * sizeof(float *));
+  for (int i = 0; i < rows; i++) {
+    arr[i] = (float *)malloc(cols * sizeof(float));
+  }
+  return arr;
+}
 
-static void zero_floats(float *buffer, int count);
-static void rmsnorm(float *o, float *x_vec, float *weight, int size);
-static void softmax(float *x_vec, int size);
-static void matmul(float *xout, float *x_vec, float *w, int n, int d);
-static void initialize_state(TransformerState *state);
-static void initialize_test_data(TransformerModel *model);
-static float *forward(const TransformerModel *model, TransformerState *state,
-                      int token, int pos);
+static float ***alloc_3d(int d1, int d2, int d3) {
+  float ***arr = (float ***)malloc(d1 * sizeof(float **));
+  for (int i = 0; i < d1; i++) {
+    arr[i] = (float **)malloc(d2 * sizeof(float *));
+    for (int j = 0; j < d2; j++) {
+      arr[i][j] = (float *)malloc(d3 * sizeof(float));
+    }
+  }
+  return arr;
+}
+
+static void free_2d(float **arr, int rows) {
+  for (int i = 0; i < rows; i++) {
+    free(arr[i]);
+  }
+  free(arr);
+}
+
+static void free_3d(float ***arr, int d1, int d2) {
+  for (int i = 0; i < d1; i++) {
+    for (int j = 0; j < d2; j++) {
+      free(arr[i][j]);
+    }
+    free(arr[i]);
+  }
+  free(arr);
+}
+
+
+// ============================================================================
+// Helper functions
+// ============================================================================
 
 static void zero_floats(float *buffer, int count) {
   for (int i = 0; i < count; i++) {
@@ -89,7 +99,7 @@ static void softmax(float *x_vec, int size) {
   }
 }
 
-static void matmul(float *xout, float *x_vec, float *w, int n, int d) {
+static void matmul(float *xout, float *x_vec, float **w, int n, int d) {
   // W (d,n) @ x (n,) -> xout (d,)
   // by far the most amount of time is spent inside this little function
   int i;
@@ -97,96 +107,125 @@ static void matmul(float *xout, float *x_vec, float *w, int n, int d) {
   for (i = 0; i < d; i++) {
     float val = 0.0f;
     for (int j = 0; j < n; j++) {
-      val += w[i * n + j] * x_vec[j];
+      val += w[i][j] * x_vec[j];
     }
     xout[i] = val;
   }
 }
 
-static void initialize_state(TransformerState *state) {
-  zero_floats(state->x, DIM);
-  zero_floats(state->xb, DIM);
-  zero_floats(state->xb2, DIM);
-  zero_floats(state->hb, HIDDEN_DIM);
-  zero_floats(state->hb2, HIDDEN_DIM);
-  zero_floats(state->q_buf, DIM);
-  zero_floats(state->att_buf, N_HEADS * SEQ_LEN);
-  zero_floats(state->logits, VOCAB_SIZE);
-  zero_floats(state->key_cache, N_LAYERS * SEQ_LEN * KV_DIM);
-  zero_floats(state->value_cache, N_LAYERS * SEQ_LEN * KV_DIM);
+// ============================================================================
+// Initialization functions
+// ============================================================================
+
+static void initialize_state(float *x, float *xb, float *xb2, float *hb,
+                             float *hb2, float *q_buf, float **att_buf,
+                             float *logits, float ***key_cache,
+                             float ***value_cache) {
+  zero_floats(x, DIM);
+  zero_floats(xb, DIM);
+  zero_floats(xb2, DIM);
+  zero_floats(hb, HIDDEN_DIM);
+  zero_floats(hb2, HIDDEN_DIM);
+  zero_floats(q_buf, DIM);
+  for (int h = 0; h < N_HEADS; h++) {
+    zero_floats(att_buf[h], SEQ_LEN);
+  }
+  zero_floats(logits, VOCAB_SIZE);
+  for (int l = 0; l < N_LAYERS; l++) {
+    for (int s = 0; s < SEQ_LEN; s++) {
+      zero_floats(key_cache[l][s], KV_DIM);
+      zero_floats(value_cache[l][s], KV_DIM);
+    }
+  }
 }
 
-static void initialize_test_data(TransformerModel *model) {
-  for (int i = 0; i < VOCAB_SIZE * DIM; i++) {
-    model->token_embedding_table[i] =
-        0.01f * (float)(rand() % 100 - 50) / 50.0f;
+static void initialize_test_data(float **token_embedding_table,
+                                 float **rms_att_weight, float **rms_ffn_weight,
+                                 float ***wq, float ***wk, float ***wv,
+                                 float ***wo, float ***w1, float ***w2,
+                                 float ***w3, float *rms_final_weight) {
+  // Token embedding table [VOCAB_SIZE][DIM]
+  for (int i = 0; i < VOCAB_SIZE; i++) {
+    for (int j = 0; j < DIM; j++) {
+      token_embedding_table[i][j] = 0.01f * (float)(rand() % 100 - 50) / 50.0f;
+    }
   }
 
+  // Per-layer weights
   for (int l = 0; l < N_LAYERS; l++) {
+    // RMS weights [N_LAYERS][DIM]
     for (int i = 0; i < DIM; i++) {
-      model->rms_att_weight[l * DIM + i] = 1.0f;
-      model->rms_ffn_weight[l * DIM + i] = 1.0f;
+      rms_att_weight[l][i] = 1.0f;
+      rms_ffn_weight[l][i] = 1.0f;
     }
 
-    for (int i = 0; i < DIM * DIM; i++) {
-      model->wq[l * DIM * DIM + i] = 0.01f * (float)(rand() % 100 - 50) / 50.0f;
-      model->wo[l * DIM * DIM + i] = 0.01f * (float)(rand() % 100 - 50) / 50.0f;
+    // wq, wo [N_LAYERS][DIM][DIM]
+    for (int i = 0; i < DIM; i++) {
+      for (int j = 0; j < DIM; j++) {
+        wq[l][i][j] = 0.01f * (float)(rand() % 100 - 50) / 50.0f;
+        wo[l][i][j] = 0.01f * (float)(rand() % 100 - 50) / 50.0f;
+      }
     }
 
-    for (int i = 0; i < DIM * KV_DIM; i++) {
-      model->wk[l * DIM * KV_DIM + i] = 0.01f * (float)(rand() % 100 - 50) / 50.0f;
-      model->wv[l * DIM * KV_DIM + i] = 0.01f * (float)(rand() % 100 - 50) / 50.0f;
+    // wk, wv [N_LAYERS][DIM][KV_DIM]
+    for (int i = 0; i < DIM; i++) {
+      for (int j = 0; j < KV_DIM; j++) {
+        wk[l][i][j] = 0.01f * (float)(rand() % 100 - 50) / 50.0f;
+        wv[l][i][j] = 0.01f * (float)(rand() % 100 - 50) / 50.0f;
+      }
     }
 
-    for (int i = 0; i < DIM * HIDDEN_DIM; i++) {
-      model->w1[l * DIM * HIDDEN_DIM + i] = 0.01f * (float)(rand() % 100 - 50) / 50.0f;
-      model->w3[l * DIM * HIDDEN_DIM + i] = 0.01f * (float)(rand() % 100 - 50) / 50.0f;
+    // w1, w3 [N_LAYERS][HIDDEN_DIM][DIM]
+    for (int i = 0; i < HIDDEN_DIM; i++) {
+      for (int j = 0; j < DIM; j++) {
+        w1[l][i][j] = 0.01f * (float)(rand() % 100 - 50) / 50.0f;
+        w3[l][i][j] = 0.01f * (float)(rand() % 100 - 50) / 50.0f;
+      }
     }
 
-    for (int i = 0; i < HIDDEN_DIM * DIM; i++) {
-      model->w2[l * HIDDEN_DIM * DIM + i] = 0.01f * (float)(rand() % 100 - 50) / 50.0f;
+    // w2 [N_LAYERS][DIM][HIDDEN_DIM]
+    for (int i = 0; i < DIM; i++) {
+      for (int j = 0; j < HIDDEN_DIM; j++) {
+        w2[l][i][j] = 0.01f * (float)(rand() % 100 - 50) / 50.0f;
+      }
     }
   }
 
+  // Final RMS weight [DIM]
   for (int i = 0; i < DIM; i++) {
-    model->rms_final_weight[i] = 1.0f;
+    rms_final_weight[i] = 1.0f;
   }
 }
 
-// -------------------------------------------------------------------
+// ============================================================================
 // Transformer forward pass
-static float *forward(const TransformerModel *model, TransformerState *state,
-                      int token, int pos) {
-  // a few convenience variables
-  float *x_vec = state->x;
-  float *xb_vec = state->xb;
-  float *xb2_vec = state->xb2;
-  float *hb_vec = state->hb;
-  float *hb2_vec = state->hb2;
-  float *q_vec = state->q_buf;
-  float *att = state->att_buf;
+// ============================================================================
 
-  // copy the token embedding into x
-  int content_base = token * DIM;
+static float *forward(
+    // Model weights
+    float **token_embedding_table, float **rms_att_weight, float **rms_ffn_weight,
+    float ***wq, float ***wk, float ***wv, float ***wo,
+    float ***w1, float ***w2, float ***w3, float *rms_final_weight,
+    // State buffers
+    float *x, float *xb, float *xb2, float *hb, float *hb2, float *q_buf,
+    float **att_buf, float *logits, float ***key_cache, float ***value_cache,
+    // Position info
+    int token, int pos) {
+
+  // Copy the token embedding into x
   for (int i = 0; i < DIM; i++) {
-    x_vec[i] = model->token_embedding_table[content_base + i];
+    x[i] = token_embedding_table[token][i];
   }
 
-  // forward all the layers
+  // Forward all the layers
   for (int l = 0; l < N_LAYERS; l++) {
-    // attention rmsnorm
-    rmsnorm(xb_vec, x_vec, model->rms_att_weight + l * DIM, DIM);
+    // Attention rmsnorm
+    rmsnorm(xb, x, rms_att_weight[l], DIM);
 
-    // key and value point to the kv cache
-    int layer_offset = l * SEQ_LEN * KV_DIM;
-    int current_offset = layer_offset + pos * KV_DIM;
-
-    // qkv matmuls for this position
-    matmul(q_vec, xb_vec, model->wq + l * DIM * DIM, DIM, DIM);
-    matmul(&state->key_cache[current_offset], xb_vec,
-           model->wk + l * DIM * KV_DIM, DIM, KV_DIM);
-    matmul(&state->value_cache[current_offset], xb_vec,
-           model->wv + l * DIM * KV_DIM, DIM, KV_DIM);
+    // QKV matmuls for this position
+    matmul(q_buf, xb, wq[l], DIM, DIM);
+    matmul(key_cache[l][pos], xb, wk[l], DIM, KV_DIM);
+    matmul(value_cache[l][pos], xb, wv[l], DIM, KV_DIM);
 
     // RoPE relative positional encoding: complex-valued rotate q and k in each head
     for (int i = 0; i < DIM; i += 2) {
@@ -197,8 +236,7 @@ static float *forward(const TransformerModel *model, TransformerState *state,
       float fci = sinf(angle);
       int rotn = i < KV_DIM ? 2 : 1; // how many vectors? 2 = q & k, 1 = q only
       for (int v_idx = 0; v_idx < rotn; v_idx++) {
-        float *vec =
-            (v_idx == 0) ? q_vec : &state->key_cache[current_offset];
+        float *vec = (v_idx == 0) ? q_buf : key_cache[l][pos];
         float v0 = vec[i];
         float v1 = vec[i + 1];
         vec[i] = v0 * fcr - v1 * fci;
@@ -206,91 +244,97 @@ static float *forward(const TransformerModel *model, TransformerState *state,
       }
     }
 
-    // multihead attention. iterate over all heads
+    // Multihead attention - iterate over all heads
     int h;
 #pragma omp parallel for private(h)
     for (h = 0; h < N_HEADS; h++) {
-      // get the query vector for this head
-      float *head_q = q_vec + h * HEAD_SIZE;
-      // attention scores for this head
-      float *head_att = att + h * SEQ_LEN;
-      // iterate over all timesteps, including the current one
+      // Get the query vector for this head
+      float *head_q = q_buf + h * HEAD_SIZE;
+      // Attention scores for this head
+      float *head_att = att_buf[h];
+      // Iterate over all timesteps, including the current one
       for (int t = 0; t <= pos; t++) {
-        // get the key vector for this head and at this timestep
-        int head_k_offset = layer_offset + t * KV_DIM + ((h / KV_MUL) * HEAD_SIZE);
-        float *head_k = &state->key_cache[head_k_offset];
-        // calculate the attention score as the dot product of q and k
+        // Get the key vector for this head and at this timestep
+        int kv_head = h / KV_MUL;
+        float *head_k = key_cache[l][t] + kv_head * HEAD_SIZE;
+        // Calculate the attention score as the dot product of q and k
         float score = 0.0f;
         for (int i = 0; i < HEAD_SIZE; i++) {
           score += head_q[i] * head_k[i];
         }
         score /= sqrtf((float)HEAD_SIZE);
-        // save the score to the attention buffer
+        // Save the score to the attention buffer
         head_att[t] = score;
       }
 
-      // softmax the scores to get attention weights, from 0..pos inclusively
+      // Softmax the scores to get attention weights, from 0..pos inclusively
       softmax(head_att, pos + 1);
 
-      // weighted sum of the values, store back into xb
-      float *xb_head = xb_vec + h * HEAD_SIZE;
-      zero_floats(xb_head, HEAD_SIZE);
+      // Weighted sum of the values, store back into xb
+      float *xb_head = xb + h * HEAD_SIZE;
+      for (int i = 0; i < HEAD_SIZE; i++) {
+        xb_head[i] = 0.0f;
+      }
       for (int t = 0; t <= pos; t++) {
-        // get the value vector for this head and at this timestep
-        int head_v_offset =
-            layer_offset + t * KV_DIM + (h / KV_MUL) * HEAD_SIZE;
-        float *head_v = &state->value_cache[head_v_offset];
-        // get the attention weight for this timestep
+        // Get the value vector for this head and at this timestep
+        int kv_head = h / KV_MUL;
+        float *head_v = value_cache[l][t] + kv_head * HEAD_SIZE;
+        // Get the attention weight for this timestep
         float weight = head_att[t];
-        // accumulate the weighted value into xb
+        // Accumulate the weighted value into xb
         for (int i = 0; i < HEAD_SIZE; i++) {
           xb_head[i] += weight * head_v[i];
         }
       }
     }
 
-    // final matmul to get the output of the attention
-    matmul(xb2_vec, xb_vec, model->wo + l * DIM * DIM, DIM, DIM);
+    // Final matmul to get the output of the attention
+    matmul(xb2, xb, wo[l], DIM, DIM);
 
-    // residual connection back into x
+    // Residual connection back into x
     for (int i = 0; i < DIM; i++) {
-      x_vec[i] += xb2_vec[i];
+      x[i] += xb2[i];
     }
 
-    // ffn rmsnorm
-    rmsnorm(xb_vec, x_vec, model->rms_ffn_weight + l * DIM, DIM);
+    // FFN rmsnorm
+    rmsnorm(xb, x, rms_ffn_weight[l], DIM);
 
     // Now for FFN in PyTorch we have: self.w2(F.silu(self.w1(x)) * self.w3(x))
-    // first calculate self.w1(x) and self.w3(x)
-    matmul(hb_vec, xb_vec, model->w1 + l * DIM * HIDDEN_DIM, DIM, HIDDEN_DIM);
-    matmul(hb2_vec, xb_vec, model->w3 + l * DIM * HIDDEN_DIM, DIM, HIDDEN_DIM);
+    // First calculate self.w1(x) and self.w3(x)
+    matmul(hb, xb, w1[l], DIM, HIDDEN_DIM);
+    matmul(hb2, xb, w3[l], DIM, HIDDEN_DIM);
 
     // SwiGLU non-linearity
     for (int i = 0; i < HIDDEN_DIM; i++) {
-      float val = hb_vec[i];
-      // silu(x)=x*σ(x), where σ(x) is the logistic sigmoid
+      float val = hb[i];
+      // silu(x)=x*sigma(x), where sigma(x) is the logistic sigmoid
       val *= (1.0f / (1.0f + expf(-val)));
-      // elementwise multiply with w3(x)
-      val *= hb2_vec[i];
-      hb_vec[i] = val;
+      // Elementwise multiply with w3(x)
+      val *= hb2[i];
+      hb[i] = val;
     }
 
-    // final matmul to get the output of the ffn
-    matmul(xb_vec, hb_vec, model->w2 + l * HIDDEN_DIM * DIM, HIDDEN_DIM, DIM);
+    // Final matmul to get the output of the ffn
+    matmul(xb, hb, w2[l], HIDDEN_DIM, DIM);
 
-    // residual connection
+    // Residual connection
     for (int i = 0; i < DIM; i++) {
-      x_vec[i] += xb_vec[i];
+      x[i] += xb[i];
     }
   }
 
-  // final rmsnorm
-  rmsnorm(x_vec, x_vec, model->rms_final_weight, DIM);
+  // Final rmsnorm
+  rmsnorm(x, x, rms_final_weight, DIM);
 
-  // classifier into logits
-  matmul(state->logits, x_vec, model->token_embedding_table, DIM, VOCAB_SIZE);
-  return state->logits;
+  // Classifier into logits
+  matmul(logits, x, token_embedding_table, DIM, VOCAB_SIZE);
+
+  return logits;
 }
+
+// ============================================================================
+// Main
+// ============================================================================
 
 int main(void) {
   printf("Testing isolated Transformer neural network functions\n");
@@ -298,23 +342,63 @@ int main(void) {
          "vocab_size=%d\n",
          DIM, HIDDEN_DIM, N_LAYERS, N_HEADS, VOCAB_SIZE);
 
-  TransformerModel model;
-  TransformerState state;
+  // Allocate model weights using pointer-to-pointer pattern
+  float **token_embedding_table = alloc_2d(VOCAB_SIZE, DIM);
+  float **rms_att_weight = alloc_2d(N_LAYERS, DIM);
+  float **rms_ffn_weight = alloc_2d(N_LAYERS, DIM);
+  float ***wq = alloc_3d(N_LAYERS, DIM, DIM);
+  float ***wk = alloc_3d(N_LAYERS, DIM, KV_DIM);
+  float ***wv = alloc_3d(N_LAYERS, DIM, KV_DIM);
+  float ***wo = alloc_3d(N_LAYERS, DIM, DIM);
+  // FFN weights: w1, w3 are [HIDDEN_DIM x DIM], w2 is [DIM x HIDDEN_DIM]
+  // matmul(out, in, W, n, d) computes out[d] = W[d][n] @ in[n]
+  float ***w1 = alloc_3d(N_LAYERS, HIDDEN_DIM, DIM);
+  float ***w2 = alloc_3d(N_LAYERS, DIM, HIDDEN_DIM);
+  float ***w3 = alloc_3d(N_LAYERS, HIDDEN_DIM, DIM);
+  float *rms_final_weight = (float *)malloc(DIM * sizeof(float));
 
-  initialize_state(&state);
+  // Allocate state buffers
+  float *x = (float *)malloc(DIM * sizeof(float));
+  float *xb = (float *)malloc(DIM * sizeof(float));
+  float *xb2 = (float *)malloc(DIM * sizeof(float));
+  float *hb = (float *)malloc(HIDDEN_DIM * sizeof(float));
+  float *hb2 = (float *)malloc(HIDDEN_DIM * sizeof(float));
+  float *q_buf = (float *)malloc(DIM * sizeof(float));
+  float **att_buf = alloc_2d(N_HEADS, SEQ_LEN);
+  float *logits = (float *)malloc(VOCAB_SIZE * sizeof(float));
+  float ***key_cache = alloc_3d(N_LAYERS, SEQ_LEN, KV_DIM);
+  float ***value_cache = alloc_3d(N_LAYERS, SEQ_LEN, KV_DIM);
+
+  // Initialize
+  initialize_state(x, xb, xb2, hb, hb2, q_buf, att_buf, logits, key_cache,
+                   value_cache);
   srand(42);
-  initialize_test_data(&model);
+  initialize_test_data(token_embedding_table, rms_att_weight, rms_ffn_weight,
+                       wq, wk, wv, wo, w1, w2, w3, rms_final_weight);
 
   printf("Testing forward pass...\n");
   int test_token = 42;
   int test_pos = 0;
-  float *logits_out = forward(&model, &state, test_token, test_pos);
+
+  CARTS_KERNEL_TIMER_START("transformer_forward");
+  float *logits_out =
+      forward(token_embedding_table, rms_att_weight, rms_ffn_weight, wq, wk, wv,
+              wo, w1, w2, w3, rms_final_weight, x, xb, xb2, hb, hb2, q_buf,
+              att_buf, logits, key_cache, value_cache, test_token, test_pos);
+  CARTS_KERNEL_TIMER_STOP("transformer_forward");
 
   printf("Forward pass completed. First 10 logits: ");
   for (int i = 0; i < 10; i++) {
     printf("%.4f ", logits_out[i]);
   }
   printf("\n");
+
+  // Compute checksum of logits
+  float checksum = 0.0f;
+  for (int i = 0; i < VOCAB_SIZE; i++) {
+    checksum += logits_out[i];
+  }
+  CARTS_BENCH_CHECKSUM(checksum);
 
   printf("\nTesting individual functions...\n");
 
@@ -331,13 +415,43 @@ int main(void) {
   printf("Softmax test: [1.0, 2.0, 3.0, 4.0] -> [%.4f, %.4f, %.4f, %.4f]\n",
          test_softmax[0], test_softmax[1], test_softmax[2], test_softmax[3]);
 
-  float test_w[6] = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
+  // Matmul test with 2D array
+  float **test_w = alloc_2d(2, 3);
+  test_w[0][0] = 1.0f; test_w[0][1] = 2.0f; test_w[0][2] = 3.0f;
+  test_w[1][0] = 4.0f; test_w[1][1] = 5.0f; test_w[1][2] = 6.0f;
   float test_vec[3] = {1.0f, 1.0f, 1.0f};
   float test_result[2];
   matmul(test_result, test_vec, test_w, 3, 2);
   printf("Matmul test: [1,2,3; 4,5,6] @ [1,1,1] = [%.1f, %.1f]\n",
          test_result[0], test_result[1]);
+  free_2d(test_w, 2);
 
   printf("All tests completed successfully!\n");
+
+  // Free model weights
+  free_2d(token_embedding_table, VOCAB_SIZE);
+  free_2d(rms_att_weight, N_LAYERS);
+  free_2d(rms_ffn_weight, N_LAYERS);
+  free_3d(wq, N_LAYERS, DIM);
+  free_3d(wk, N_LAYERS, DIM);
+  free_3d(wv, N_LAYERS, DIM);
+  free_3d(wo, N_LAYERS, DIM);
+  free_3d(w1, N_LAYERS, HIDDEN_DIM);
+  free_3d(w2, N_LAYERS, DIM);
+  free_3d(w3, N_LAYERS, HIDDEN_DIM);
+  free(rms_final_weight);
+
+  // Free state buffers
+  free(x);
+  free(xb);
+  free(xb2);
+  free(hb);
+  free(hb2);
+  free(q_buf);
+  free_2d(att_buf, N_HEADS);
+  free(logits);
+  free_3d(key_cache, N_LAYERS, SEQ_LEN);
+  free_3d(value_cache, N_LAYERS, SEQ_LEN);
+
   return 0;
 }

@@ -102,9 +102,26 @@ Transformer architecture is the foundation of:
 - Clean parameter passing via structs
 - OpenMP parallel for in key operations:
   - Matrix multiplications
-  - RMSNorm computation
-  - Attention score computation
+  - Multi-head attention computation
 - Self-contained implementation
+
+### Modifications for CARTS
+
+**Heap allocation for large structs:**
+
+The original code stack-allocated `TransformerModel` (~577 KB) and `TransformerState` (~37 KB), totaling ~614 KB on the stack. This caused SIGBUS crashes in ARTS runtime.
+
+```c
+// Original (crashed):
+TransformerModel model;
+TransformerState state;
+
+// Fixed (heap allocation):
+TransformerModel *model = (TransformerModel *)malloc(sizeof(TransformerModel));
+TransformerState *state = (TransformerState *)malloc(sizeof(TransformerState));
+```
+
+See `docs/analysis.md` for detailed debugging steps.
 
 ## Key Features
 

@@ -1,6 +1,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "arts/Utils/Benchmarks/CartsBenchmarks.h"
 
 #ifndef BATCH
 #define BATCH 16
@@ -76,9 +77,20 @@ int main(void) {
   }
 
   init(x, gamma, beta);
+  CARTS_KERNEL_TIMER_START("layernorm");
   layernorm_forward(x, gamma, beta, BATCH, HIDDEN, EPS);
+  CARTS_KERNEL_TIMER_STOP("layernorm");
 
   printf("layernorm checksum=%f\n", checksum(x));
+
+  // Compute checksum inline
+  double checksum_value = 0.0;
+  for (int b = 0; b < BATCH; b++) {
+    for (int h = 0; h < HIDDEN; h++) {
+      checksum_value += x[b][h];
+    }
+  }
+  CARTS_BENCH_CHECKSUM(checksum_value);
 
   for (int b = 0; b < BATCH; ++b) {
     free(x[b]);

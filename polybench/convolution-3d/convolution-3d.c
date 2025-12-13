@@ -1,110 +1,96 @@
-/* POLYBENCH/GPU-OPENMP
- *
- * This file is a part of the Polybench/GPU-OpenMP suite
- *
- * Contact:
- * William Killian <killian@udel.edu>
- *
- * Copyright 2013, The University of Delaware
+/* POLYBENCH/GPU-OPENMP - 3D Convolution
+ * Rewritten to use pointer-to-pointer-to-pointer for CARTS compatibility
  */
-#include <math.h>
+#include <omp.h>
 #include <stdio.h>
-#include <string.h>
-#include <unistd.h>
+#include <stdlib.h>
+#include "arts/Utils/Benchmarks/CartsBenchmarks.h"
 
-/* Include polybench common header. */
-#include <polybench.h>
+#ifndef NI
+#define NI 256
+#endif
+#ifndef NJ
+#define NJ 256
+#endif
+#ifndef NK
+#define NK 256
+#endif
 
-/* Include benchmark-specific header. */
-/* Default data type is double, default size is 4096x4096. */
-#include "convolution-3d.h"
-
-/* Array initialization. */
-static void init_array(int ni, int nj, int nk,
-                       DATA_TYPE POLYBENCH_3D(A, NI, NJ, NK, ni, nj, nk)) {
-  int i, j, k;
-
-  for (i = 0; i < ni; i++)
-    for (j = 0; j < nj; j++)
-      for (k = 0; j < nk; k++) {
-        A[i][j][k] = i % 12 + 2 * (j % 7) + 3 * (k % 13);
-      }
-}
-
-/* DCE code. Must scan the entire live-out data.
-   Can be used also to check the correctness of the output. */
-static void print_array(int ni, int nj, int nk,
-                        DATA_TYPE POLYBENCH_3D(B, NI, NJ, NK, ni, nj, nk))
-
-{
-  int i, j, k;
-
-  for (i = 0; i < ni; i++)
-    for (j = 0; j < nj; j++)
-      for (k = 0; j < nk; k++) {
-        fprintf(stderr, DATA_PRINTF_MODIFIER, B[i][j][k]);
-        if (((i * NJ + j) * NK + k) % 20 == 0)
-          fprintf(stderr, "\n");
-      }
-  fprintf(stderr, "\n");
-}
-
-/* Main computational kernel. The whole function will be timed,
-   including the call and return. */
-static void kernel_conv2d(int ni, int nj, int nk,
-                          DATA_TYPE POLYBENCH_3D(A, NI, NJ, NK, ni, nj, nk),
-                          DATA_TYPE POLYBENCH_3D(B, NI, NJ, NK, ni, nj, nk)) {
-  int i, j, k;
-#pragma scop
-#pragma omp parallel
-  {
-#pragma omp for private(j, k)
-    for (i = 1; i < _PB_NI - 1; ++i)
-      for (j = 1; j < _PB_NJ - 1; ++j)
-        for (k = 1; k < _PB_NK - 1; ++k) {
-          B[i][j][k] =
-              2 * A[i - 1][j - 1][k - 1] + 4 * A[i + 1][j - 1][k - 1] +
-              5 * A[i - 1][j - 1][k - 1] + 7 * A[i + 1][j - 1][k - 1] +
-              -8 * A[i - 1][j - 1][k - 1] + 10 * A[i + 1][j - 1][k - 1] +
-              -3 * A[i][j - 1][k] + 6 * A[i][j][k] + -9 * A[i][j + 1][k] +
-              2 * A[i - 1][j - 1][k + 1] + 4 * A[i + 1][j - 1][k + 1] +
-              5 * A[i - 1][j][k + 1] + 7 * A[i + 1][j][k + 1] +
-              -8 * A[i - 1][j + 1][k + 1] + 10 * A[i + 1][j + 1][k + 1];
-        }
-  }
-#pragma endscop
-}
+#ifndef DATA_TYPE
+#define DATA_TYPE float
+#endif
 
 int main(int argc, char **argv) {
-  /* Retrieve problem size. */
   int ni = NI;
   int nj = NJ;
   int nk = NK;
 
-  /* Variable declaration/allocation. */
-  POLYBENCH_3D_ARRAY_DECL(A, DATA_TYPE, NI, NJ, NK, ni, nj, nk);
-  POLYBENCH_3D_ARRAY_DECL(B, DATA_TYPE, NI, NJ, NK, ni, nj, nk);
+  /* Allocate 3D arrays using pointer-to-pointer-to-pointer */
+  DATA_TYPE ***A = (DATA_TYPE ***)malloc(ni * sizeof(DATA_TYPE **));
+  DATA_TYPE ***B = (DATA_TYPE ***)malloc(ni * sizeof(DATA_TYPE **));
 
-  /* Initialize array(s). */
-  init_array(ni, nj, nk, POLYBENCH_ARRAY(A));
+  for (int i = 0; i < ni; i++) {
+    A[i] = (DATA_TYPE **)malloc(nj * sizeof(DATA_TYPE *));
+    B[i] = (DATA_TYPE **)malloc(nj * sizeof(DATA_TYPE *));
+    for (int j = 0; j < nj; j++) {
+      A[i][j] = (DATA_TYPE *)malloc(nk * sizeof(DATA_TYPE));
+      B[i][j] = (DATA_TYPE *)malloc(nk * sizeof(DATA_TYPE));
+    }
+  }
 
-  /* Start timer. */
-  polybench_start_instruments;
+  /* Initialize array A */
+  for (int i = 0; i < ni; i++) {
+    for (int j = 0; j < nj; j++) {
+      for (int k = 0; k < nk; k++) {
+        A[i][j][k] = (DATA_TYPE)(i % 12 + 2 * (j % 7) + 3 * (k % 13));
+        B[i][j][k] = 0.0f;
+      }
+    }
+  }
 
-  /* Run kernel. */
-  kernel_conv2d(ni, nj, nk, POLYBENCH_ARRAY(A), POLYBENCH_ARRAY(B));
+  CARTS_KERNEL_TIMER_START("kernel_conv3d");
 
-  /* Stop and print timer. */
-  polybench_stop_instruments;
-  polybench_print_instruments;
+  /* 3D Convolution kernel */
+#pragma omp parallel for schedule(static)
+  for (int i = 1; i < ni - 1; ++i) {
+    for (int j = 1; j < nj - 1; ++j) {
+      for (int k = 1; k < nk - 1; ++k) {
+        B[i][j][k] =
+            2 * A[i - 1][j - 1][k - 1] + 4 * A[i + 1][j - 1][k - 1] +
+            5 * A[i - 1][j - 1][k - 1] + 7 * A[i + 1][j - 1][k - 1] +
+            -8 * A[i - 1][j - 1][k - 1] + 10 * A[i + 1][j - 1][k - 1] +
+            -3 * A[i][j - 1][k] + 6 * A[i][j][k] + -9 * A[i][j + 1][k] +
+            2 * A[i - 1][j - 1][k + 1] + 4 * A[i + 1][j - 1][k + 1] +
+            5 * A[i - 1][j][k + 1] + 7 * A[i + 1][j][k + 1] +
+            -8 * A[i - 1][j + 1][k + 1] + 10 * A[i + 1][j + 1][k + 1];
+      }
+    }
+  }
 
-  /* Prevent dead-code elimination. All live-out data must be printed
-     by the function call in argument. */
-  polybench_prevent_dce(print_array(ni, nj, nk, POLYBENCH_ARRAY(B)));
+  CARTS_KERNEL_TIMER_STOP("kernel_conv3d");
 
-  /* Be clean. */
-  POLYBENCH_FREE_ARRAY(A);
-  POLYBENCH_FREE_ARRAY(B);
+  /* Compute checksum */
+  double checksum = 0.0;
+  for (int i = 0; i < ni; i++) {
+    for (int j = 0; j < nj; j++) {
+      for (int k = 0; k < nk; k++) {
+        checksum += B[i][j][k];
+      }
+    }
+  }
+  CARTS_BENCH_CHECKSUM(checksum);
+
+  /* Free arrays */
+  for (int i = 0; i < ni; i++) {
+    for (int j = 0; j < nj; j++) {
+      free(A[i][j]);
+      free(B[i][j]);
+    }
+    free(A[i]);
+    free(B[i]);
+  }
+  free(A);
+  free(B);
 
   return 0;
 }

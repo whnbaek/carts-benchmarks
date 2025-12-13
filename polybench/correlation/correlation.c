@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "correlation.h"
+#include "arts/Utils/Benchmarks/CartsBenchmarks.h"
 
 static void print_array(int m, int n, DATA_TYPE **corr, const char *name) {
   (void)name;
@@ -92,7 +93,18 @@ int main(int argc, char **argv) {
 
   init_array(m, n, data);
 
+  CARTS_KERNEL_TIMER_START("kernel_correlation");
   kernel_correlation(m, n, data, corr, mean, stddev);
+  CARTS_KERNEL_TIMER_STOP("kernel_correlation");
+
+  /* Compute checksum inline (CARTS limitation: no helper functions) */
+  double checksum = 0.0;
+  for (int i = 0; i < m; i++) {
+    for (int j = 0; j < m; j++) {
+      checksum += corr[i][j];
+    }
+  }
+  CARTS_BENCH_CHECKSUM(checksum);
 
   polybench_prevent_dce(print_array(m, m, corr, "corr"));
 

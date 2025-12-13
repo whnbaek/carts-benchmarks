@@ -18,6 +18,7 @@
 /* Include benchmark-specific header. */
 /* Default data type is double, default size is 4096x4096. */
 #include "convolution-2d.h"
+#include "arts/Utils/Benchmarks/CartsBenchmarks.h"
 
 /* Array initialization. */
 static void init_array(int ni, int nj, DATA_TYPE **A) {
@@ -50,7 +51,7 @@ static void print_array(int ni, int nj, DATA_TYPE **B)
 static void kernel_conv2d(int ni, int nj, DATA_TYPE **A, DATA_TYPE **B) {
   int i, j;
 #pragma scop
-// NOTE: collapse(2) not yet supported by CARTS - using nested parallel for
+
 #pragma omp parallel for private(j) schedule(static)
   for (i = 1; i < _PB_NI - 1; ++i) {
     for (j = 1; j < _PB_NJ - 1; ++j) {
@@ -89,11 +90,22 @@ int main(int argc, char **argv) {
   polybench_start_instruments;
 
   /* Run kernel. */
+  CARTS_KERNEL_TIMER_START("kernel_conv2d");
   kernel_conv2d(ni, nj, A, B);
+  CARTS_KERNEL_TIMER_STOP("kernel_conv2d");
 
   /* Stop and print timer. */
   polybench_stop_instruments;
   polybench_print_instruments;
+
+  /* Compute checksum inline (CARTS limitation: no helper functions) */
+  double checksum = 0.0;
+  for (int i = 0; i < ni; i++) {
+    for (int j = 0; j < nj; j++) {
+      checksum += B[i][j];
+    }
+  }
+  CARTS_BENCH_CHECKSUM(checksum);
 
   /* Prevent dead-code elimination. All live-out data must be printed
      by the function call in argument. */

@@ -1,6 +1,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "arts/Utils/Benchmarks/CartsBenchmarks.h"
 
 #ifndef NX
 #define NX 48
@@ -51,50 +52,54 @@ static void sw4lite_rhs4sg_base(float ****rhs,
                       1.0f / 12.0f};
   const float inv_h2 = 1.0f / (h * h);
 
-#pragma omp parallel for collapse(2) schedule(static)
+#pragma omp parallel for schedule(static)
   for (int k = POINTS_PER_DIR; k < NZ - POINTS_PER_DIR; ++k) {
     for (int j = POINTS_PER_DIR; j < NY - POINTS_PER_DIR; ++j) {
       for (int i = POINTS_PER_DIR; i < NX - POINTS_PER_DIR; ++i) {
         const float mu_c = mu[i][j][k];
         const float la_c = lambda[i][j][k];
 
-        for (int c = 0; c < COMP; ++c) {
-          float lap = 0.0f;
+        // Component 0 (x-direction divergence)
+        {
+          float lap0 = 0.0f;
           for (int offset = -2; offset <= 2; ++offset) {
-            lap += w[offset + 2] * (u[c][i + offset][j][k] +
-                                    u[c][i][j + offset][k] +
-                                    u[c][i][j][k + offset]);
+            lap0 += w[offset + 2] * (u[0][i + offset][j][k] +
+                                     u[0][i][j + offset][k] +
+                                     u[0][i][j][k + offset]);
           }
+          float div_term0 = u[0][i + 1][j][k] - u[0][i - 1][j][k];
+          rhs[0][i][j][k] =
+              mu_c * lap0 * inv_h2 + (la_c + mu_c) * div_term0 * (0.5f / h);
+        }
 
-          float div_term = 0.0f;
-          if (c == 0) {
-            div_term = u[c][i + 1][j][k] - u[c][i - 1][j][k];
-          } else if (c == 1) {
-            div_term = u[c][i][j + 1][k] - u[c][i][j - 1][k];
-          } else {
-            div_term = u[c][i][j][k + 1] - u[c][i][j][k - 1];
+        // Component 1 (y-direction divergence)
+        {
+          float lap1 = 0.0f;
+          for (int offset = -2; offset <= 2; ++offset) {
+            lap1 += w[offset + 2] * (u[1][i + offset][j][k] +
+                                     u[1][i][j + offset][k] +
+                                     u[1][i][j][k + offset]);
           }
+          float div_term1 = u[1][i][j + 1][k] - u[1][i][j - 1][k];
+          rhs[1][i][j][k] =
+              mu_c * lap1 * inv_h2 + (la_c + mu_c) * div_term1 * (0.5f / h);
+        }
 
-          rhs[c][i][j][k] =
-              mu_c * lap * inv_h2 + (la_c + mu_c) * div_term * (0.5f / h);
+        // Component 2 (z-direction divergence)
+        {
+          float lap2 = 0.0f;
+          for (int offset = -2; offset <= 2; ++offset) {
+            lap2 += w[offset + 2] * (u[2][i + offset][j][k] +
+                                     u[2][i][j + offset][k] +
+                                     u[2][i][j][k + offset]);
+          }
+          float div_term2 = u[2][i][j][k + 1] - u[2][i][j][k - 1];
+          rhs[2][i][j][k] =
+              mu_c * lap2 * inv_h2 + (la_c + mu_c) * div_term2 * (0.5f / h);
         }
       }
     }
   }
-}
-
-static float checksum(const float ****rhs) {
-  float sum = 0.0f;
-  for (int c = 0; c < COMP; ++c) {
-    for (int i = 0; i < NX; ++i) {
-      for (int j = 0; j < NY; ++j) {
-        for (int k = 0; k < NZ; ++k) {
-          sum += rhs[c][i][j][k];
-        }
-      }
-    }
-  }
-  return sum;
 }
 
 int main(void) {
@@ -104,11 +109,6 @@ int main(void) {
   // Allocate 3D arrays for mu and lambda [NX][NY][NZ]
   float ***mu = (float ***)malloc(NX * sizeof(float **));
   float ***lambda = (float ***)malloc(NX * sizeof(float **));
-
-  if (!u || !mu || !lambda || !rhs) {
-    fprintf(stderr, "allocation failure\n");
-    return 1;
-  }
 
   for (int c = 0; c < COMP; ++c) {
     u[c] = (float ***)malloc(NX * sizeof(float **));
@@ -133,9 +133,23 @@ int main(void) {
   }
 
   init_array(u, mu, lambda, rhs);
-  sw4lite_rhs4sg_base(rhs, u, mu, lambda, 1.0f);
 
-  printf("sw4lite_rhs4sg_base checksum=%f\n", checksum(rhs));
+  CARTS_KERNEL_TIMER_START("sw4lite_rhs4sg_base");
+  sw4lite_rhs4sg_base(rhs, u, mu, lambda, 1.0f);
+  CARTS_KERNEL_TIMER_STOP("sw4lite_rhs4sg_base");
+
+  // Compute checksum inline
+  float checksum = 0.0f;
+  for (int c = 0; c < COMP; ++c) {
+    for (int i = 0; i < NX; ++i) {
+      for (int j = 0; j < NY; ++j) {
+        for (int k = 0; k < NZ; ++k) {
+          checksum += rhs[c][i][j][k];
+        }
+      }
+    }
+  }
+  CARTS_BENCH_CHECKSUM(checksum);
 
   // Free arrays
   for (int c = 0; c < COMP; ++c) {

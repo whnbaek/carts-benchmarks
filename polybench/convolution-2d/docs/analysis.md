@@ -104,61 +104,126 @@ Walk through these steps and fix any problem that you find in the way
         ...
         func.func @main(%arg0: i32, %arg1: memref<?xmemref<?xi8>>) -> i32 attributes {llvm.linkage = #llvm.linkage<external>} {
             ...
-            /// Notice that this DB allocation is coarse grained - Stencil allocation.
-            %guid, %ptr = arts.db_alloc[<inout>, <heap>, <write>] route(%c0_i32 : i32) sizes[%c1] elementType(f32) elementSizes[%4, %c64] {...} : (memref<?xi64>, memref<?xmemref<memref<?x?xf32>>>)
-            /// Notice that this DB allocation is coarse grained - Stencil allocation.
-            %guid_9, %ptr_10 = arts.db_alloc[<inout>, <heap>, <write>] route(%c0_i32 : i32) sizes[%4] elementType(f32) elementSizes[%c64] {...} : (memref<?xi64>, memref<?xmemref<memref<?xf32>>>)
+            /// A allocation - This is a coarse grained allocation because the access A[i][j] - since it is a stencill access, we
+            /// fallback to a coarse grained allocation. This can be optimized to a fine grained allocation in the future.
+            %guid, %ptr = arts.db_alloc[<in>, <heap>, <read>] route(%c0_i32 : i32) sizes[%c1] elementType(f32) elementSizes[%4, %c64] {...} : (memref<?xi64>, memref<?xmemref<?x?xf32>>)
+            /// B allocation - This is a fine grained allocation because the access B[j] doesnt depend on the 
+            ///parallel loop variable i. We promoted the first element size dimension to the sizes.
+            %guid_10, %ptr_11 = arts.db_alloc[<inout>, <heap>, <write>] route(%c0_i32 : i32) sizes[%4] elementType(f32) elementSizes[%c64] {...} : (memref<?xi64>, memref<?xmemref<?xf32>>)
             scf.for %arg2 = %c0 to %c64 step %c1 {
-            %7 = arith.index_cast %arg2 : index to i32
+            %19 = arith.index_cast %arg2 : index to i32
             scf.for %arg3 = %c0 to %c64 step %c1 {
-                %8 = arith.index_cast %arg3 : index to i32
-                %9 = arith.addi %7, %8 : i32
-                %10 = arith.sitofp %9 : i32 to f32
-                %11 = arith.divf %10, %cst_8 : f32
-                %12 = arts.db_ref %ptr[%c0] : memref<?xmemref<memref<?x?xf32>>> -> memref<?x?xf32>
-                memref.store %11, %12[%arg2, %arg3] : memref<?x?xf32>
+                /// Initialization of the A array.
+                ....
+                %24 = arts.db_ref %ptr[%c0] : memref<?xmemref<?x?xf32>> -> memref<?x?xf32>
+                memref.store %23, %24[%arg2, %arg3] : memref<?x?xf32>
             } {...}
             } {...}
-            %5 = arts.epoch {
             ...
-            scf.if %13 {
-                /// Input DB Acquire - I wouldve expected the alloc to be IN as well...
-                %guid_11, %ptr_12 = arts.db_acquire[<in>] (%guid : memref<?xi64>, %ptr : memref<?xmemref<memref<?x?xf32>>>) offsets[%c0] sizes[%c1] offset_hints[%7] size_hints[%12] {arts.twin_diff = false} -> (memref<?xi64>, memref<?xmemref<memref<?x?xf32>>>)
-                /// Output DB Acquire - Fine grained! This is expected...
-                %guid_13, %ptr_14 = arts.db_acquire[<out>] (%guid_9 : memref<?xi64>, %ptr_10 : memref<?xmemref<memref<?xf32>>>) offsets[%7] sizes[%12] offset_hints[%7] size_hints[%12] {arts.twin_diff = false} -> (memref<?xi64>, memref<?xmemref<memref<?xf32>>>)
-                arts.edt <task> <intranode> route(%c0_i32) (%ptr_12, %ptr_14) : memref<?xmemref<memref<?x?xf32>>>, memref<?xmemref<memref<?xf32>>> attributes {arts.id = 35 : i64} {
-                ^bb0(%arg3: memref<?xmemref<memref<?x?xf32>>>, %arg4: memref<?xmemref<memref<?xf32>>>):
-                    scf.for %arg5 = %c0 to %12 step %c1 {
-                    ...
+            /// for region...
+            %8 = arts.epoch {
+            scf.for %arg2 = %c0 to %c16 step %c1 {
+                %19 = arith.muli %arg2, %c4 : index
+                %20 = arith.cmpi uge, %19, %c62 : index
+                %21 = arith.subi %c62, %19 : index
+                %22 = arith.select %20, %c0, %21 : index
+                %23 = arith.minui %22, %c4 : index
+                %24 = arith.minui %23, %22 : index
+                %25 = arith.cmpi ugt, %24, %c0 : index
+                scf.if %25 {
+                /// Acquire the A array. 
+                %guid_12, %ptr_13 = arts.db_acquire[<in>] (%guid : memref<?xi64>, %ptr : memref<?xmemref<?x?xf32>>) offsets[%c0] sizes[%c1] offset_hints[%19] size_hints[%24] {arts.twin_diff = false} -> (memref<?xi64>, memref<?xmemref<?x?xf32>>)
+                /// Acquire the B array.
+                %guid_14, %ptr_15 = arts.db_acquire[<out>] (%guid_10 : memref<?xi64>, %ptr_11 : memref<?xmemref<?xf32>>) offsets[%19] sizes[%24] offset_hints[%19] size_hints[%24] {arts.twin_diff = false} -> (memref<?xi64>, memref<?xmemref<?xf32>>)
+                /// Create the task.
+                arts.edt <task> <intranode> route(%c0_i32) (%ptr_13, %ptr_15) : memref<?xmemref<?x?xf32>>, memref<?xmemref<?xf32>> attributes {arts.id = 51 : i64} {
+                ^bb0(%arg3: memref<?xmemref<?x?xf32>>, %arg4: memref<?xmemref<?xf32>>):
+                    scf.for %arg5 = %c0 to %24 step %c1 {
+                    /// Compute the initial we will be accessing in the B array.
+                    %26 = arith.addi %19, %arg5 : index
+                    %27 = arith.addi %26, %c1 : index
+                    %28 = arith.index_cast %27 : index to i32
+                    %29 = arith.addi %28, %c-1_i32 : i32
+                    %30 = arith.index_cast %29 : i32 to index
+                    %31 = arith.addi %28, %c1_i32 : i32
+                    %32 = arith.index_cast %31 : i32 to index
                     scf.for %arg6 = %c1 to %c63 step %c1 {
-                        /// Coarse grained, then dbref to get the inner dimension.
-                        %22 = arts.db_ref %arg3[%c0] : memref<?xmemref<memref<?x?xf32>>> -> memref<?x?xf32>
-                        %23 = memref.load %22[%18, %21] : memref<?x?xf32>
-                        ...
-                        /// Fine grained, then dbref to get the inner dimension.
-                        %61 = arts.db_ref %arg4[%60] : memref<?xmemref<memref<?xf32>>> -> memref<?xf32>
-                        memref.store %59, %61[%arg6] : memref<?xf32>
+                        %33 = arith.addi %arg6, %c-1 : index
+                        /// Load the A array.
+                        %34 = arts.db_ref %arg3[%c0] : memref<?xmemref<?x?xf32>> -> memref<?x?xf32>
+                        /// A[i][j-1]
+                        %35 = memref.load %34[%30, %33] : memref<?x?xf32>
+                        %36 = arith.extf %35 : f32 to f64
+                        %37 = arith.mulf %36, %cst_7 : f64
+                        /// A[i][j]
+                        %38 = memref.load %34[%30, %arg6] : memref<?x?xf32>
+                        %39 = arith.extf %38 : f32 to f64
+                        %40 = arith.mulf %39, %cst_6 : f64
+                        %41 = arith.addf %37, %40 : f64
+                        %42 = arith.addi %arg6, %c1 : index
+                        /// A[i][j+1]
+                        %43 = memref.load %34[%30, %42] : memref<?x?xf32>
+                        %44 = arith.extf %43 : f32 to f64
+                        %45 = arith.mulf %44, %cst_5 : f64
+                        %46 = arith.addf %41, %45 : f64
+                        /// A[i-1][j-1]
+                        %47 = memref.load %34[%27, %33] : memref<?x?xf32>
+                        %48 = arith.extf %47 : f32 to f64
+                        %49 = arith.mulf %48, %cst_4 : f64
+                        %50 = arith.addf %46, %49 : f64
+                        /// A[i-1][j]
+                        %51 = memref.load %34[%27, %arg6] : memref<?x?xf32>
+                        %52 = arith.extf %51 : f32 to f64
+                        %53 = arith.mulf %52, %cst_3 : f64
+                        %54 = arith.addf %50, %53 : f64
+                        /// A[i-1][j+1]
+                        %55 = memref.load %34[%27, %42] : memref<?x?xf32>
+                        %56 = arith.extf %55 : f32 to f64
+                        %57 = arith.mulf %56, %cst_2 : f64
+                        %58 = arith.addf %54, %57 : f64
+                        /// A[i+1][j-1]
+                        %59 = memref.load %34[%32, %33] : memref<?x?xf32>
+                        %60 = arith.extf %59 : f32 to f64
+                        %61 = arith.mulf %60, %cst_1 : f64
+                        %62 = arith.addf %58, %61 : f64
+                        /// A[i+1][j]
+                        %63 = memref.load %34[%32, %arg6] : memref<?x?xf32>
+                        %64 = arith.extf %63 : f32 to f64
+                        %65 = arith.mulf %64, %cst_0 : f64
+                        %66 = arith.addf %62, %65 : f64
+                        /// A[i+1][j+1]
+                        %67 = memref.load %34[%32, %42] : memref<?x?xf32>
+                        %68 = arith.extf %67 : f32 to f64
+                        %69 = arith.mulf %68, %cst : f64
+                        %70 = arith.addf %66, %69 : f64
+                        %71 = arith.truncf %70 : f64 to f32
+                        /// Load the B[i], since we added the offset to the acquire B, we now substract it...
+                        %72 = arith.subi %27, %19 : index
+                        %73 = arts.db_ref %arg4[%72] : memref<?xmemref<?xf32>> -> memref<?xf32>
+                        memref.store %71, %73[%arg6] : memref<?xf32>
                     } {...}
                     } {...}
-                    arts.db_release(%arg3) : memref<?xmemref<memref<?x?xf32>>>
-                    arts.db_release(%arg4) : memref<?xmemref<memref<?xf32>>>
+                    arts.db_release(%arg3) : memref<?xmemref<?x?xf32>>
+                    arts.db_release(%arg4) : memref<?xmemref<?xf32>>
                 }
                 }
             } {...}
             } : i64
             ...
+            arts.db_free(%guid_10) : memref<?xi64>
+            arts.db_free(%ptr_11) : memref<?xmemref<?xf32>>
             arts.db_free(%guid) : memref<?xi64>
-            arts.db_free(%ptr) : memref<?xmemref<memref<?x?xf32>>>
-            arts.db_free(%guid_9) : memref<?xi64>
-            arts.db_free(%ptr_10) : memref<?xmemref<memref<?xf32>>>
+            arts.db_free(%ptr) : memref<?xmemref<?x?xf32>>
             return %c0_i32 : i32
         }
-    }
+        ...
+        }
     ```
-    Lets investigate if this is OK, right now we are having some segmentation faults when running the program.
 
 4. **Finally lets carts execute and check**
 ```bash
     carts execute convolution-2d.c -O3 -DMINI_DATASET -I. -I../common -I../utilities
    ./convolution-2d_arts
 ```
+
+---

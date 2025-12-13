@@ -1,6 +1,7 @@
 #include <omp.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "arts/Utils/Benchmarks/CartsBenchmarks.h"
 
 #ifndef NX
 #define NX 48
@@ -15,8 +16,9 @@
 #define DT 0.001f
 #endif
 
-static void init(float ***vx, float ***vy, float ***vz, float ***rho, float ***sxx,
-                 float ***syy, float ***szz, float ***sxy, float ***sxz, float ***syz) {
+static void init(float ***vx, float ***vy, float ***vz, float ***rho,
+                 float ***sxx, float ***syy, float ***szz, float ***sxy,
+                 float ***sxz, float ***syz) {
   int idx = 0;
   for (int i = 0; i < NX; ++i) {
     for (int j = 0; j < NY; ++j) {
@@ -37,38 +39,35 @@ static void init(float ***vx, float ***vy, float ***vz, float ***rho, float ***s
   }
 }
 
-static inline float diff(const float ***arr, int i, int j, int k, int dir) {
-  switch (dir) {
-  case 0:
-    return arr[i + 1][j][k] - arr[i][j][k];
-  case 1:
-    return arr[i][j + 1][k] - arr[i][j][k];
-  default:
-    return arr[i][j][k + 1] - arr[i][j][k];
-  }
+static inline float diff_x(const float ***arr, int i, int j, int k) {
+  return arr[i + 1][j][k] - arr[i][j][k];
 }
 
-static void specfem_velocity_update(
-    float ***vx, float ***vy, float ***vz,
-    const float ***rho, const float ***sxx,
-    const float ***syy, const float ***szz,
-    const float ***sxy, const float ***sxz,
-    const float ***syz) {
-#pragma omp parallel for collapse(2) schedule(static)
+static inline float diff_y(const float ***arr, int i, int j, int k) {
+  return arr[i][j + 1][k] - arr[i][j][k];
+}
+
+static inline float diff_z(const float ***arr, int i, int j, int k) {
+  return arr[i][j][k + 1] - arr[i][j][k];
+}
+
+static void specfem_velocity_update(float ***vx, float ***vy, float ***vz,
+                                    const float ***rho, const float ***sxx,
+                                    const float ***syy, const float ***szz,
+                                    const float ***sxy, const float ***sxz,
+                                    const float ***syz) {
+#pragma omp parallel for schedule(static)
   for (int k = 1; k < NZ - 1; ++k) {
     for (int j = 1; j < NY - 1; ++j) {
       for (int i = 1; i < NX - 1; ++i) {
         const float inv_rho = 1.0f / rho[i][j][k];
 
         const float dvx =
-            diff(sxx, i, j, k, 0) + diff(sxy, i, j, k, 1) +
-            diff(sxz, i, j, k, 2);
+            diff_x(sxx, i, j, k) + diff_y(sxy, i, j, k) + diff_z(sxz, i, j, k);
         const float dvy =
-            diff(sxy, i, j, k, 0) + diff(syy, i, j, k, 1) +
-            diff(syz, i, j, k, 2);
+            diff_x(sxy, i, j, k) + diff_y(syy, i, j, k) + diff_z(syz, i, j, k);
         const float dvz =
-            diff(sxz, i, j, k, 0) + diff(syz, i, j, k, 1) +
-            diff(szz, i, j, k, 2);
+            diff_x(sxz, i, j, k) + diff_y(syz, i, j, k) + diff_z(szz, i, j, k);
 
         vx[i][j][k] += DT * inv_rho * dvx;
         vy[i][j][k] += DT * inv_rho * dvy;
@@ -76,18 +75,6 @@ static void specfem_velocity_update(
       }
     }
   }
-}
-
-static float checksum(const float ***vx, const float ***vy, const float ***vz) {
-  float s = 0.0f;
-  for (int i = 0; i < NX; ++i) {
-    for (int j = 0; j < NY; ++j) {
-      for (int k = 0; k < NZ; ++k) {
-        s += vx[i][j][k] + vy[i][j][k] + vz[i][j][k];
-      }
-    }
-  }
-  return s;
 }
 
 int main(void) {
@@ -102,12 +89,6 @@ int main(void) {
   float ***sxy = (float ***)malloc(NX * sizeof(float **));
   float ***sxz = (float ***)malloc(NX * sizeof(float **));
   float ***syz = (float ***)malloc(NX * sizeof(float **));
-
-  if (!vx || !vy || !vz || !rho || !sxx || !syy || !szz || !sxy || !sxz ||
-      !syz) {
-    fprintf(stderr, "allocation failure\n");
-    return 1;
-  }
 
   for (int i = 0; i < NX; ++i) {
     vx[i] = (float **)malloc(NY * sizeof(float *));
@@ -135,9 +116,21 @@ int main(void) {
   }
 
   init(vx, vy, vz, rho, sxx, syy, szz, sxy, sxz, syz);
-  specfem_velocity_update(vx, vy, vz, rho, sxx, syy, szz, sxy, sxz, syz);
 
-  printf("specfem3d_velocity checksum=%f\n", checksum(vx, vy, vz));
+  CARTS_KERNEL_TIMER_START("specfem_velocity_update");
+  specfem_velocity_update(vx, vy, vz, rho, sxx, syy, szz, sxy, sxz, syz);
+  CARTS_KERNEL_TIMER_STOP("specfem_velocity_update");
+
+  // Compute checksum inline
+  float checksum = 0.0f;
+  for (int i = 0; i < NX; ++i) {
+    for (int j = 0; j < NY; ++j) {
+      for (int k = 0; k < NZ; ++k) {
+        checksum += vx[i][j][k] + vy[i][j][k] + vz[i][j][k];
+      }
+    }
+  }
+  CARTS_BENCH_CHECKSUM(checksum);
 
   // Free 3D arrays
   for (int i = 0; i < NX; ++i) {

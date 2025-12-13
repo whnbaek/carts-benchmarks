@@ -2,9 +2,9 @@
 # ML kernel defaults layered on top of the shared CARTS pipeline.
 ################################################################################
 
-TEMPLATE_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
-ML_ROOT := $(abspath $(TEMPLATE_DIR)/../..)
-PROBLEM_SIZES_FILE := $(TEMPLATE_DIR)/problem-sizes.mk
+ML_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
+BENCHMARKS_ROOT := $(abspath $(ML_ROOT)/..)
+PROBLEM_SIZES_FILE := $(ML_ROOT)/common/problem-sizes.mk
 ifneq ($(strip $(wildcard $(PROBLEM_SIZES_FILE))),)
 include $(PROBLEM_SIZES_FILE)
 endif
@@ -28,9 +28,9 @@ ifneq ($(strip $(PRESET_TARGETS)),)
 define CARTS_PRESET_template
 .PHONY: $(1)
 $(1):
-	$$(MAKE) CFLAGS="$$(PRESET_FLAGS_$(EXAMPLE_NAME)_$(1))" all
+	$$(MAKE) CFLAGS="$$(PRESET_FLAGS_$(EXAMPLE_NAME)_$(1))" all openmp
 endef
 $(foreach preset,$(PRESET_TARGETS),$(eval $(call CARTS_PRESET_template,$(preset))))
 endif
 
-include $(ML_ROOT)/common/carts-pipeline.mk
+include $(BENCHMARKS_ROOT)/common/carts.mk

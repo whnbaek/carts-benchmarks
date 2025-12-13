@@ -19,17 +19,12 @@
  * Memory Layout: NCHW (batch, channels, height, width)
  * Index calculation: index = b*filters*spatial + f*spatial + i
  * where spatial = height * width
- *
- * CARTS Compatibility:
- * - No global variables
- * - Clean parameter passing
- * - OpenMP parallelization
- * - Self-contained functions
  */
 
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "arts/Utils/Benchmarks/CartsBenchmarks.h"
 
 // Problem size configuration
 #ifndef BATCH_SIZE
@@ -268,11 +263,6 @@ int main(int argc, char **argv) {
   float *mean = (float *)malloc(channels * sizeof(float));
   float *variance = (float *)malloc(channels * sizeof(float));
 
-  // if (!x || !output || !scales || !biases || !mean || !variance) {
-  //   fprintf(stderr, "Memory allocation failed\n");
-  //   return 1;
-  // }
-
   for (int b = 0; b < batch; ++b) {
     x[b] = (float **)malloc(channels * sizeof(float *));
     output[b] = (float **)malloc(channels * sizeof(float *));
@@ -287,8 +277,10 @@ int main(int argc, char **argv) {
 
   // Run batch normalization
   printf("Running batch normalization...\n");
+  CARTS_KERNEL_TIMER_START("batchnorm");
   batchnorm_forward(x, output, scales, biases, batch, channels, spatial,
                     mean, variance);
+  CARTS_KERNEL_TIMER_STOP("batchnorm");
 
   // Validation: normalized output should have mean ≈ 0 and variance ≈ 1 (before
   // scale/bias)
@@ -316,6 +308,17 @@ int main(int argc, char **argv) {
   printf("\n");
 
   printf("\nBatch normalization completed successfully!\n");
+
+  // Compute checksum inline
+  double checksum = 0.0;
+  for (int b = 0; b < batch; b++) {
+    for (int c = 0; c < channels; c++) {
+      for (int s = 0; s < spatial; s++) {
+        checksum += output[b][c][s];
+      }
+    }
+  }
+  CARTS_BENCH_CHECKSUM(checksum);
 
   // Cleanup
   for (int b = 0; b < batch; ++b) {
