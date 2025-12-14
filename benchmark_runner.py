@@ -197,10 +197,16 @@ class RunResult:
 @dataclass
 class TimingResult:
     """Timing comparison between ARTS and OpenMP."""
-    arts_time_sec: float
+    arts_time_sec: float  # Basis used for speedup (kernel if available, else total)
     omp_time_sec: float
     speedup: float  # omp_time / arts_time (>1 = ARTS faster)
     note: str
+    # Additional context
+    arts_kernel_sec: Optional[float] = None
+    omp_kernel_sec: Optional[float] = None
+    arts_total_sec: float = 0.0
+    omp_total_sec: float = 0.0
+    speedup_basis: str = "total"  # "kernel" or "total"
 
 
 @dataclass
@@ -584,7 +590,8 @@ def create_config_directory(
         {artifacts_base_dir}/{benchmark_name}/build/{threads}t_{nodes}n/artifacts/
         {artifacts_base_dir}/{benchmark_name}/build/{threads}t_{nodes}n/runs/
     """
-    config_dir = artifacts_base_dir / benchmark_name / "build" / f"{config.arts_threads}t_{config.arts_nodes}n"
+    config_dir = artifacts_base_dir / benchmark_name / \
+        "build" / f"{config.arts_threads}t_{config.arts_nodes}n"
     artifacts_dir = config_dir / "artifacts"
     runs_dir = config_dir / "runs"
 
@@ -1000,7 +1007,8 @@ class BenchmarkRunner:
                     experiment_dir, name, config
                 )
                 # Copy build artifacts ONCE per config
-                artifact_paths = copy_build_artifacts(bench_path, config_dir, result_artifacts_dir)
+                artifact_paths = copy_build_artifacts(
+                    bench_path, config_dir, result_artifacts_dir)
 
             # Run multiple times per configuration
             for run_num in range(1, runs + 1):
@@ -1098,7 +1106,8 @@ class BenchmarkRunner:
                         if counter_dir.exists():
                             run_counters_dir.mkdir(exist_ok=True)
                             for counter_file in counter_dir.glob("*.json"):
-                                shutil.copy2(counter_file, run_counters_dir / counter_file.name)
+                                shutil.copy2(
+                                    counter_file, run_counters_dir / counter_file.name)
                             artifacts.counters_dir = str(run_counters_dir)
                             artifacts.counter_files = sorted(
                                 str(f) for f in run_counters_dir.glob("*.json")
@@ -1400,32 +1409,58 @@ class BenchmarkRunner:
         arts_result: RunResult,
         omp_result: RunResult,
     ) -> TimingResult:
-        """Calculate speedup: omp_time / arts_time."""
+        """Calculate speedup preferring kernel timings when available."""
+        arts_kernel = get_kernel_time(arts_result)
+        omp_kernel = get_kernel_time(omp_result)
+        arts_total = arts_result.duration_sec
+        omp_total = omp_result.duration_sec
+
         if arts_result.status != Status.PASS or omp_result.status != Status.PASS:
             return TimingResult(
-                arts_time_sec=arts_result.duration_sec,
-                omp_time_sec=omp_result.duration_sec,
+                arts_time_sec=arts_total,
+                omp_time_sec=omp_total,
                 speedup=0.0,
                 note="Cannot calculate: one or both runs failed",
+                arts_kernel_sec=arts_kernel,
+                omp_kernel_sec=omp_kernel,
+                arts_total_sec=arts_total,
+                omp_total_sec=omp_total,
+                speedup_basis="kernel" if (
+                    arts_kernel is not None and omp_kernel is not None) else "total",
             )
 
-        if arts_result.duration_sec == 0:
-            speedup = 0.0
-            note = "ARTS time is zero"
+        # Prefer kernel timings when both are available, otherwise fall back to total duration
+        if arts_kernel is not None and omp_kernel is not None:
+            arts_time = arts_kernel
+            omp_time = omp_kernel
+            speedup_basis = "kernel"
         else:
-            speedup = omp_result.duration_sec / arts_result.duration_sec
+            arts_time = arts_total
+            omp_time = omp_total
+            speedup_basis = "total"
+
+        if arts_time == 0:
+            speedup = 0.0
+            note = f"ARTS {speedup_basis} time is zero"
+        else:
+            speedup = omp_time / arts_time
             if speedup > 1:
-                note = f"ARTS is {speedup:.2f}x faster"
+                note = f"ARTS is {speedup:.2f}x faster ({speedup_basis})"
             elif speedup < 1:
-                note = f"OpenMP is {1/speedup:.2f}x faster"
+                note = f"OpenMP is {1/speedup:.2f}x faster ({speedup_basis})"
             else:
-                note = "Same performance"
+                note = f"Same performance ({speedup_basis})"
 
         return TimingResult(
-            arts_time_sec=arts_result.duration_sec,
-            omp_time_sec=omp_result.duration_sec,
+            arts_time_sec=arts_time,
+            omp_time_sec=omp_time,
             speedup=speedup,
             note=note,
+            arts_kernel_sec=arts_kernel,
+            omp_kernel_sec=omp_kernel,
+            arts_total_sec=arts_total,
+            omp_total_sec=omp_total,
+            speedup_basis=speedup_basis,
         )
 
     def collect_artifacts(self, bench_path: Path) -> Artifacts:
@@ -2562,9 +2597,15 @@ def export_json(
                 "parallel_task_timing": _serialize_parallel_task_timing(r.run_omp.parallel_task_timing),
             },
             "timing": {
-                "arts_kernel_sec": r.timing.arts_time_sec,
-                "omp_kernel_sec": r.timing.omp_time_sec,
+                "arts_time_sec": r.timing.arts_time_sec,
+                "omp_time_sec": r.timing.omp_time_sec,
                 "speedup": r.timing.speedup,
+                "speedup_basis": r.timing.speedup_basis,
+                "arts_kernel_sec": r.timing.arts_kernel_sec,
+                "omp_kernel_sec": r.timing.omp_kernel_sec,
+                "arts_total_sec": r.timing.arts_total_sec,
+                "omp_total_sec": r.timing.omp_total_sec,
+                "note": r.timing.note,
             },
             "verification": {
                 "correct": r.verification.correct,
@@ -2982,6 +3023,7 @@ def report(
         import csv
         rows = []
         for r in data["results"]:
+            timing = r["timing"]
             rows.append({
                 "name": r["name"],
                 "suite": r["suite"],
@@ -2990,9 +3032,14 @@ def report(
                 "build_omp": r["build_omp"]["status"],
                 "run_arts": r["run_arts"]["status"],
                 "run_omp": r["run_omp"]["status"],
-                "arts_time": r["timing"]["arts_time_sec"],
-                "omp_time": r["timing"]["omp_time_sec"],
-                "speedup": r["timing"]["speedup"],
+                "arts_time": timing.get("arts_time_sec"),
+                "omp_time": timing.get("omp_time_sec"),
+                "speedup_basis": timing.get("speedup_basis", "total"),
+                "arts_kernel": timing.get("arts_kernel_sec"),
+                "omp_kernel": timing.get("omp_kernel_sec"),
+                "arts_total": timing.get("arts_total_sec"),
+                "omp_total": timing.get("omp_total_sec"),
+                "speedup": timing.get("speedup"),
                 "correct": r["verification"]["correct"],
             })
 
