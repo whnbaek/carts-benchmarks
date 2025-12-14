@@ -954,6 +954,10 @@ class BenchmarkRunner:
         """
         results = []
 
+        # Clean benchmark directory to avoid stale artifacts
+        if self.clean:
+            self.clean_benchmark(name)
+
         # Create timestamped experiment directory ONCE per experiment
         # Both JSON results and artifacts will be stored together
         experiment_dir = None
@@ -2490,6 +2494,8 @@ def export_json(
     artifacts_directory: Optional[str] = None,
 ) -> None:
     """Export results to JSON file with comprehensive reproducibility metadata."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
     carts_dir = get_carts_dir()
     benchmarks_dir = get_benchmarks_dir()
 
