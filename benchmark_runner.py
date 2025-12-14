@@ -303,6 +303,110 @@ def parse_threads(spec: str) -> List[int]:
         return [int(spec)]
 
 
+# ============================================================================
+# Weak Scaling Support
+# ============================================================================
+
+# Benchmark-specific size parameters for weak scaling
+# Maps benchmark names to their size parameters and work complexity
+BENCHMARK_SIZE_PARAMS = {
+    # PolyBench - Linear Algebra
+    "polybench/gemm": {"params": ["NI", "NJ", "NK"], "complexity": "3d"},
+    "polybench/2mm": {"params": ["NI", "NJ", "NK", "NL"], "complexity": "3d"},
+    "polybench/3mm": {"params": ["NI", "NJ", "NK", "NL", "NM"], "complexity": "3d"},
+    "polybench/syrk": {"params": ["N", "M"], "complexity": "3d"},
+    "polybench/syr2k": {"params": ["N", "M"], "complexity": "3d"},
+    "polybench/trmm": {"params": ["M", "N"], "complexity": "3d"},
+    "polybench/lu": {"params": ["N"], "complexity": "3d"},
+    "polybench/cholesky": {"params": ["N"], "complexity": "3d"},
+    "polybench/mvt": {"params": ["N"], "complexity": "2d"},
+    "polybench/atax": {"params": ["M", "N"], "complexity": "2d"},
+    "polybench/bicg": {"params": ["M", "N"], "complexity": "2d"},
+    "polybench/gesummv": {"params": ["N"], "complexity": "2d"},
+    "polybench/doitgen": {"params": ["NQ", "NR", "NP"], "complexity": "3d"},
+    # PolyBench - Stencils (2D work complexity)
+    "polybench/jacobi2d": {"params": ["N"], "complexity": "2d", "extra": ["TSTEPS"]},
+    "polybench/fdtd-2d": {"params": ["NX", "NY"], "complexity": "2d", "extra": ["TMAX"]},
+    "polybench/heat-3d": {"params": ["N"], "complexity": "3d", "extra": ["TSTEPS"]},
+    "polybench/seidel-2d": {"params": ["N"], "complexity": "2d", "extra": ["TSTEPS"]},
+    # PolyBench - Data Mining
+    "polybench/correlation": {"params": ["M", "N"], "complexity": "2d"},
+    "polybench/covariance": {"params": ["M", "N"], "complexity": "2d"},
+    # KaStORS benchmarks
+    "kastors-jacobi/jacobi-block-for": {"params": ["SIZE"], "complexity": "2d"},
+    "kastors-jacobi/jacobi-for": {"params": ["SIZE"], "complexity": "2d"},
+    "kastors-jacobi/jacobi-task-dep": {"params": ["SIZE"], "complexity": "2d"},
+}
+
+
+def compute_weak_scaled_size(
+    base_size: int,
+    base_parallelism: int,
+    target_parallelism: int,
+    work_complexity: str = "2d",
+) -> int:
+    """Compute problem size for weak scaling (constant work per core).
+
+    For constant work/core:
+    - 2D problems (stencils, 2D FFT): N(p) = N0 * sqrt(p/p0)
+    - 3D problems (GEMM, 3D stencils): N(p) = N0 * cbrt(p/p0)
+    - Linear problems: N(p) = N0 * (p/p0)
+
+    Args:
+        base_size: Problem size at base parallelism level.
+        base_parallelism: Starting parallelism (usually 1 thread/node).
+        target_parallelism: Target parallelism (threads * nodes).
+        work_complexity: "2d" (N²), "3d" (N³), or "linear" (N).
+
+    Returns:
+        Scaled problem size for constant work/core.
+    """
+    import math
+
+    ratio = target_parallelism / base_parallelism
+    if work_complexity == "2d":
+        return int(base_size * math.sqrt(ratio))
+    elif work_complexity == "3d":
+        return int(base_size * (ratio ** (1 / 3)))
+    else:  # linear
+        return int(base_size * ratio)
+
+
+def get_weak_scaling_cflags(
+    benchmark: str,
+    base_size: int,
+    threads: int,
+    nodes: int = 1,
+    base_parallelism: int = 1,
+) -> str:
+    """Generate CFLAGS for weak scaling a specific benchmark.
+
+    Args:
+        benchmark: Benchmark name (e.g., "polybench/gemm").
+        base_size: Base problem size at base_parallelism.
+        threads: Number of threads per node.
+        nodes: Number of nodes.
+        base_parallelism: Reference parallelism for base_size.
+
+    Returns:
+        CFLAGS string with scaled size parameters.
+    """
+    if benchmark not in BENCHMARK_SIZE_PARAMS:
+        # Unknown benchmark - return empty (use default size)
+        return ""
+
+    config = BENCHMARK_SIZE_PARAMS[benchmark]
+    target_parallelism = threads * nodes
+    scaled_size = compute_weak_scaled_size(
+        base_size, base_parallelism, target_parallelism, config["complexity"]
+    )
+
+    # Build CFLAGS for all size parameters
+    cflags_parts = [f"-D{param}={scaled_size}" for param in config["params"]]
+
+    return " ".join(cflags_parts)
+
+
 def generate_arts_config(
     base_path: Optional[Path],
     threads: int,
@@ -588,6 +692,9 @@ class BenchmarkRunner:
         omp_threads: Optional[int] = None,
         launcher: str = "ssh",
         node_count: int = 1,
+        weak_scaling: bool = False,
+        base_size: Optional[int] = None,
+        scaling_complexity: str = "auto",
     ) -> List[BenchmarkResult]:
         """Run benchmark with multiple thread configurations.
 
@@ -598,6 +705,9 @@ class BenchmarkRunner:
             launcher: ARTS launcher type (ssh, slurm, lsf, local). For Slurm,
                      this controls how the executable is invoked (via srun).
             node_count: Number of nodes for distributed execution.
+            weak_scaling: If True, scale problem size with parallelism.
+            base_size: Base problem size for weak scaling.
+            scaling_complexity: Work complexity for scaling: 'auto', '2d', '3d', 'linear'.
         """
         results = []
         for threads in threads_list:
@@ -606,14 +716,31 @@ class BenchmarkRunner:
                 base_config, threads, counter_dir, launcher, node_count
             )
 
+            # Compute effective cflags (may include weak scaling size overrides)
+            effective_cflags = cflags
+            if weak_scaling and base_size:
+                # Determine complexity (auto looks up per-benchmark, else use specified)
+                if scaling_complexity == "auto" and name in BENCHMARK_SIZE_PARAMS:
+                    complexity = BENCHMARK_SIZE_PARAMS[name]["complexity"]
+                elif scaling_complexity in ("2d", "3d", "linear"):
+                    complexity = scaling_complexity
+                else:
+                    complexity = "2d"  # Default fallback
+
+                weak_cflags = get_weak_scaling_cflags(
+                    name, base_size, threads, node_count, base_parallelism=1
+                )
+                if weak_cflags:
+                    effective_cflags = f"{cflags} {weak_cflags}".strip()
+
             # Set OMP_NUM_THREADS for OpenMP variant
             # Use omp_threads if specified, otherwise match ARTS threads
             actual_omp_threads = omp_threads if omp_threads else threads
             env = {"OMP_NUM_THREADS": str(actual_omp_threads)}
 
-            # Build both variants
-            build_arts = self.build_benchmark(name, size, "arts", arts_cfg, cflags)
-            build_omp = self.build_benchmark(name, size, "openmp", None, cflags)
+            # Build both variants (with potentially different cflags per thread count)
+            build_arts = self.build_benchmark(name, size, "arts", arts_cfg, effective_cflags)
+            build_omp = self.build_benchmark(name, size, "openmp", None, effective_cflags)
 
             # Run ARTS version - MUST pass artsConfig env var so runtime uses same config as compile
             # ARTS reads config from: 1) artsConfig env var, 2) ./arts.cfg in CWD
@@ -1916,6 +2043,9 @@ def run(
     omp_threads: Optional[int] = typer.Option(None, "--omp-threads", help="OpenMP thread count (default: same as ARTS threads)"),
     launcher: str = typer.Option("ssh", "--launcher", "-l", help="ARTS launcher: ssh (default), slurm, lsf, local"),
     node_count: int = typer.Option(1, "--node-count", "-n", help="Number of nodes for distributed execution"),
+    weak_scaling: bool = typer.Option(False, "--weak-scaling", help="Enable weak scaling: auto-scale problem size with parallelism"),
+    base_size: Optional[int] = typer.Option(None, "--base-size", help="Base problem size for weak scaling (at base parallelism)"),
+    scaling_complexity: str = typer.Option("auto", "--scaling-complexity", help="Work complexity: 'auto' (per benchmark), '2d' (N²), '3d' (N³), 'linear'"),
     cflags: Optional[str] = typer.Option(None, "--cflags", help="Additional CFLAGS: '-DNI=500 -DNJ=500'"),
     collect_counters: bool = typer.Option(False, "--collect-counters", help="Enable ARTS counter collection"),
     counter_dir: Optional[Path] = typer.Option(None, "--counter-dir", help="Counter output directory"),
@@ -1976,6 +2106,9 @@ def run(
             omp_threads,
             launcher,
             node_count,
+            weak_scaling,
+            base_size,
+            scaling_complexity,
         )
     else:
         # Standard mode
