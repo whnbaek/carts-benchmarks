@@ -302,11 +302,31 @@ def parse_threads(spec: str) -> List[int]:
 
 
 def generate_arts_config(base_path: Optional[Path], threads: int, counter_dir: Optional[Path]) -> Path:
-    """Generate temporary arts.cfg with specific thread count."""
+    """Generate temporary arts.cfg with specific thread count.
+
+    The generated config must include all required ARTS keys:
+    - launcher: Required (ARTS dereferences without null check in Config.c:621)
+    - threads: Worker thread count per node
+    - nodeCount: Number of nodes (1 for single-node)
+    - masterNode: Primary node for coordination
+    """
     if base_path and base_path.exists():
         content = base_path.read_text()
     else:
-        content = "[ARTS]\nthreads=1\nnodeCount=1\n"
+        # Default config with ALL required keys
+        # ARTS requires launcher to be set (Config.c:621 dereferences without null check)
+        # NOTE: launcher=local with ports=0 causes segfaults on shutdown
+        # Use launcher=ssh with ports=1 for single-node execution
+        content = """[ARTS]
+threads=1
+nodeCount=1
+launcher=ssh
+masterNode=localhost
+tMT=0
+outgoing=1
+incoming=1
+ports=1
+"""
 
     # Update threads
     if re.search(r'^threads=', content, re.MULTILINE):
@@ -556,9 +576,12 @@ class BenchmarkRunner:
             build_arts = self.build_benchmark(name, size, "arts", arts_cfg, cflags)
             build_omp = self.build_benchmark(name, size, "openmp", None, cflags)
 
-            # Run ARTS version (ARTS uses arts.cfg for thread count)
+            # Run ARTS version - MUST pass artsConfig env var so runtime uses same config as compile
+            # ARTS reads config from: 1) artsConfig env var, 2) ./arts.cfg in CWD
+            # Without this, runtime may use wrong config (thread count mismatch)
             if build_arts.status == Status.PASS and build_arts.executable:
-                run_arts = self.run_benchmark(build_arts.executable, timeout)
+                arts_env = {"artsConfig": str(arts_cfg)}
+                run_arts = self.run_benchmark(build_arts.executable, timeout, env=arts_env)
             else:
                 run_arts = RunResult(
                     status=Status.SKIP,
@@ -921,9 +944,10 @@ class BenchmarkRunner:
         # Build OpenMP version
         build_omp = self.build_benchmark(name, size, "openmp", arts_config)
 
-        # Run ARTS version
+        # Run ARTS version - pass artsConfig env var so runtime uses same config as compile
         if build_arts.status == Status.PASS and build_arts.executable:
-            run_arts = self.run_benchmark(build_arts.executable, timeout)
+            arts_env = {"artsConfig": str(arts_config)} if arts_config else None
+            run_arts = self.run_benchmark(build_arts.executable, timeout, env=arts_env)
         else:
             run_arts = RunResult(
                 status=Status.SKIP,
