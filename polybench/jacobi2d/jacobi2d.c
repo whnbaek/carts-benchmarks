@@ -1,5 +1,4 @@
-/* PolyBench-like 2D Jacobi - No pointer swap version */
-/* Avoids pointer swap pattern that confuses CanonicalizeMemrefs */
+/* PolyBench-like 2D Jacobi */
 
 #include <omp.h>
 #include <stdio.h>

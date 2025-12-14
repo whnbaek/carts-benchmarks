@@ -33,7 +33,6 @@ stages/
 **/autom4te.cache/**
 **/aclocal.m4
 **/Makefile.in
-**/Makefile
 
 # Python helpers
 __pycache__/
