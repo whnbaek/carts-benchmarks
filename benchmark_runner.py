@@ -1824,6 +1824,149 @@ def get_git_hash(repo_path: Path) -> Optional[str]:
     return None
 
 
+def get_compiler_version() -> Dict[str, Optional[str]]:
+    """Get compiler version information."""
+    compilers = {}
+
+    # Try clang
+    try:
+        result = subprocess.run(
+            ["clang", "--version"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            first_line = result.stdout.split('\n')[0]
+            compilers["clang"] = first_line
+    except Exception:
+        pass
+
+    # Try gcc
+    try:
+        result = subprocess.run(
+            ["gcc", "--version"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            first_line = result.stdout.split('\n')[0]
+            compilers["gcc"] = first_line
+    except Exception:
+        pass
+
+    return compilers
+
+
+def get_cpu_info() -> Dict[str, Any]:
+    """Get CPU information for reproducibility."""
+    cpu_info = {}
+
+    system = platform.system().lower()
+
+    if system == "darwin":
+        # macOS: use sysctl
+        try:
+            result = subprocess.run(
+                ["sysctl", "-n", "machdep.cpu.brand_string"],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0:
+                cpu_info["model"] = result.stdout.strip()
+
+            result = subprocess.run(
+                ["sysctl", "-n", "hw.ncpu"],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0:
+                cpu_info["cores"] = int(result.stdout.strip())
+
+            result = subprocess.run(
+                ["sysctl", "-n", "hw.physicalcpu"],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0:
+                cpu_info["physical_cores"] = int(result.stdout.strip())
+        except Exception:
+            pass
+    elif system == "linux":
+        # Linux: parse /proc/cpuinfo
+        try:
+            with open("/proc/cpuinfo", "r") as f:
+                content = f.read()
+            for line in content.split('\n'):
+                if line.startswith("model name"):
+                    cpu_info["model"] = line.split(":")[1].strip()
+                    break
+
+            result = subprocess.run(["nproc"], capture_output=True, text=True)
+            if result.returncode == 0:
+                cpu_info["cores"] = int(result.stdout.strip())
+        except Exception:
+            pass
+
+    return cpu_info
+
+
+def get_reproducibility_metadata(carts_dir: Path, benchmarks_dir: Path) -> Dict[str, Any]:
+    """Collect comprehensive reproducibility metadata.
+
+    This captures all information needed to reproduce benchmark results:
+    - Git commit hashes for all repositories
+    - Compiler versions
+    - CPU and system information
+    - Relevant environment variables
+    """
+    metadata = {}
+
+    # Git hashes
+    metadata["git_commits"] = {
+        "carts": get_git_hash(carts_dir) or "unknown",
+        "carts_benchmarks": get_git_hash(benchmarks_dir) or "unknown",
+    }
+
+    # Check for ARTS submodule
+    arts_dir = carts_dir / "external" / "arts"
+    if arts_dir.exists():
+        metadata["git_commits"]["arts"] = get_git_hash(arts_dir) or "unknown"
+
+    # Compiler versions
+    metadata["compilers"] = get_compiler_version()
+
+    # CPU info
+    metadata["cpu"] = get_cpu_info()
+
+    # System info
+    metadata["system"] = {
+        "os": platform.system(),
+        "os_version": platform.release(),
+        "platform": platform.platform(),
+        "python_version": platform.python_version(),
+    }
+
+    # Relevant environment variables
+    env_vars_to_capture = [
+        "OMP_NUM_THREADS",
+        "OMP_PROC_BIND",
+        "OMP_PLACES",
+        "CARTS_DIR",
+        "ARTS_DIR",
+        "CC",
+        "CXX",
+        "CFLAGS",
+        "CXXFLAGS",
+        "LDFLAGS",
+    ]
+    metadata["environment"] = {
+        var: os.environ.get(var) for var in env_vars_to_capture if os.environ.get(var)
+    }
+
+    return metadata
+
+
+
 def _serialize_parallel_task_timing(timing: Optional[ParallelTaskTiming]) -> Optional[Dict]:
     """Serialize ParallelTaskTiming to JSON-compatible dict."""
     if timing is None:
@@ -1848,26 +1991,42 @@ def export_json(
     total_duration: float,
     threads_list: Optional[List[int]] = None,
     cflags: Optional[str] = None,
+    launcher: Optional[str] = None,
+    node_count: Optional[int] = None,
+    weak_scaling: bool = False,
+    base_size: Optional[int] = None,
 ) -> None:
-    """Export results to JSON file."""
+    """Export results to JSON file with comprehensive reproducibility metadata."""
     carts_dir = get_carts_dir()
+    benchmarks_dir = get_benchmarks_dir()
 
-    # Collect metadata
+    # Collect comprehensive reproducibility metadata
+    repro_metadata = get_reproducibility_metadata(carts_dir, benchmarks_dir)
+
+    # Collect experiment metadata
     metadata = {
         "timestamp": datetime.now().isoformat(),
-        "carts_version": f"git:{get_git_hash(carts_dir) or 'unknown'}",
         "hostname": platform.node(),
-        "platform": platform.system().lower(),
-        "python_version": platform.python_version(),
         "size": size,
         "total_duration_seconds": total_duration,
+        # Include reproducibility bundle
+        "reproducibility": repro_metadata,
     }
 
-    # Add thread sweep metadata if applicable
+    # Add experiment configuration
     if threads_list:
         metadata["thread_sweep"] = threads_list
     if cflags:
         metadata["cflags"] = cflags
+    if launcher:
+        metadata["launcher"] = launcher
+    if node_count and node_count > 1:
+        metadata["node_count"] = node_count
+    if weak_scaling:
+        metadata["weak_scaling"] = {
+            "enabled": True,
+            "base_size": base_size,
+        }
 
     # Calculate summary
     passed = sum(1 for r in results if r.run_arts.status == Status.PASS and r.verification.correct)
@@ -2131,7 +2290,18 @@ def run(
 
     # Export if requested
     if output:
-        export_json(results, output, size, total_duration, threads_list, cflags)
+        export_json(
+            results,
+            output,
+            size,
+            total_duration,
+            threads_list,
+            cflags,
+            launcher,
+            node_count,
+            weak_scaling,
+            base_size,
+        )
         console.print(f"\n[dim]Results exported to: {output}[/]")
 
     # Exit with error if any failures
