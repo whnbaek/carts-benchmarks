@@ -562,15 +562,24 @@ class BenchmarkRunner:
         cflags: str = "",
         counter_dir: Optional[Path] = None,
         timeout: int = DEFAULT_TIMEOUT,
+        omp_threads: Optional[int] = None,
     ) -> List[BenchmarkResult]:
-        """Run benchmark with multiple thread configurations."""
+        """Run benchmark with multiple thread configurations.
+
+        Args:
+            omp_threads: If specified, use this fixed thread count for OpenMP
+                        instead of matching ARTS thread count. Useful for
+                        comparing ARTS scaling against OpenMP at its optimal.
+        """
         results = []
         for threads in threads_list:
             # Generate arts.cfg with thread count
             arts_cfg = generate_arts_config(base_config, threads, counter_dir)
 
             # Set OMP_NUM_THREADS for OpenMP variant
-            env = {"OMP_NUM_THREADS": str(threads)}
+            # Use omp_threads if specified, otherwise match ARTS threads
+            actual_omp_threads = omp_threads if omp_threads else threads
+            env = {"OMP_NUM_THREADS": str(actual_omp_threads)}
 
             # Build both variants
             build_arts = self.build_benchmark(name, size, "arts", arts_cfg, cflags)
@@ -1834,6 +1843,7 @@ def run(
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Minimal output (CI mode)"),
     trace: bool = typer.Option(False, "--trace", help="Show benchmark output (kernel timing and checksum)"),
     threads: Optional[str] = typer.Option(None, "--threads", help="Thread counts: '1,2,4,8' or '1:16:2' for thread sweep"),
+    omp_threads: Optional[int] = typer.Option(None, "--omp-threads", help="OpenMP thread count (default: same as ARTS threads)"),
     cflags: Optional[str] = typer.Option(None, "--cflags", help="Additional CFLAGS: '-DNI=500 -DNJ=500'"),
     collect_counters: bool = typer.Option(False, "--collect-counters", help="Enable ARTS counter collection"),
     counter_dir: Optional[Path] = typer.Option(None, "--counter-dir", help="Counter output directory"),
@@ -1891,6 +1901,7 @@ def run(
             cflags or "",
             counter_dir,
             timeout,
+            omp_threads,
         )
     else:
         # Standard mode
