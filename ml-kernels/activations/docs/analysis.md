@@ -179,8 +179,126 @@ Walk through these steps and fix any problem that you find in the way
    }
     ```
 
+4. **Analyze the concurrency-opt output**
+    ```bash
+      carts run activations.mlir --concurrency-opt &> activations_concurrency_opt.mlir
+    ```
+
 4. **Finally lets carts execute and check**
 ```bash
     carts execute activations.c -O3 -DMINI_DATASET -I. -I../common -I../utilities
    ./activations_arts
+```
+
+---
+
+## Diagnosis: Chunked Allocation Problem (Large Dataset Timeout)
+
+### Problem Description
+
+When running `make large` (16M elements), the benchmark times out. The root cause is in the `Db.cpp` partition pass which promotes coarse-grained allocations to element-wise, creating 16 million datablocks instead of a reasonable chunked allocation.
+
+### Pipeline Flow
+
+```
+1. CreateDbs pass: Creates coarse allocation
+   sizes=[1], elementSizes=[16777216]  (1 datablock with 16M elements)
+
+2. ForLowering pass: Chunks the parallel loop into 16 workers
+   Each worker processes 1M elements (16M / 16 workers)
+   Creates acquires with element-space offsets: 0, 1M, 2M, ...
+
+3. Db.cpp partition pass: Promotes allocation (BUG!)
+   sizes=[16777216], elementSizes=[1]  (16M datablocks of 1 element each!)
+```
+
+### The Bug
+
+The `promoteAllocForChunking()` function in `Db.cpp` promotes coarse allocations to element-wise without respecting the H2 cost model heuristics (`kMaxOuterDBs = 1024`). This creates millions of tiny datablocks, causing:
+
+1. **Runtime overhead**: Each `arts.db_ref` becomes a runtime call
+2. **Sequential loop timeout**: Loops iterating over 16M elements make 16M runtime calls
+
+### The Fix: Chunked Allocation with Div/Mod Index Transformation
+
+Instead of element-wise promotion, use **chunked allocation** that matches the loop partitioning:
+
+```
+Before (element-wise - BAD):
+  sizes=[16777216], elementSizes=[1]     // 16M datablocks!
+  db_ref %ptr[%element_idx]              // element_idx = 0..16M
+
+After (chunked - GOOD):
+  sizes=[16], elementSizes=[1048576]     // 16 datablocks of 1M elements
+  db_ref %ptr[%chunk_idx]                // chunk_idx = element_idx / 1M
+  memref.load %ref[%inner_idx]           // inner_idx = element_idx % 1M
+```
+
+### Index Transformation
+
+When promoting to chunked allocation, we must transform all `db_ref` indices:
+
+```mlir
+// Original (element-wise indexing):
+%ref = arts.db_ref %ptr[%arg2] : ... -> memref<?xf32>
+memref.load %ref[%c0]
+
+// Transformed (chunked indexing):
+%chunk_idx = arith.divui %arg2, %c1048576 : index   // which datablock
+%inner_idx = arith.remui %arg2, %c1048576 : index   // offset within datablock
+%ref = arts.db_ref %ptr[%chunk_idx] : ... -> memref<?xf32>
+memref.load %ref[%inner_idx]
+```
+
+### Acquire Offset Transformation
+
+Acquires also need their offsets converted from element-space to chunk-space:
+
+```mlir
+// Original acquire (element-space):
+arts.db_acquire offsets[%elem_offset] sizes[%elem_size]
+// where elem_offset = 0, 1048576, 2097152, ...
+
+// Transformed acquire (chunk-space):
+%chunk_offset = arith.divui %elem_offset, %c1048576
+%chunk_count = arith.divui (%elem_size + %c1048575), %c1048576  // ceiling div
+arts.db_acquire offsets[%chunk_offset] sizes[%chunk_count]
+// where chunk_offset = 0, 1, 2, ...
+```
+
+### Coordinate Localization
+
+Inside EDTs, `localizeCoordinates()` subtracts acquire offsets from global indices. With chunked allocation, both must be in chunk-space:
+
+```mlir
+// Inside EDT with acquire offset in chunk-space:
+%global_chunk_idx = arith.divui %global_elem_idx, %c1048576
+%local_chunk_idx = arith.subi %global_chunk_idx, %chunk_offset
+%ref = arts.db_ref %arg[%local_chunk_idx]
+```
+
+### Files Modified
+
+1. **`Db.cpp`**: Extract chunk size from size hints (handles `minui` pattern)
+2. **`DbTransforms.cpp`**:
+   - `buildIndexMapping()`: Compute div/mod for chunked allocation
+   - `localizeCoordinates()`: Handle chunk-space indices
+   - Acquire offset/size transformation to chunk-space
+
+### Expected Result
+
+With 16M elements and 16 workers:
+- **Before**: 16M datablocks, timeout on sequential loops
+- **After**: 16 datablocks of 1M elements, fast execution
+
+### Verification Commands
+
+```bash
+# Check allocation after concurrency-opt
+carts run activations.mlir --concurrency-opt 2>&1 | grep "db_alloc"
+# Should show: sizes[%c16] elementSizes[%c1048576]
+
+# Check index transformation
+carts run activations.mlir --concurrency-opt 2>&1 | grep -E "divui|remui.*1048576"
+# Should show divui/remui operations for chunk indexing
 ```
