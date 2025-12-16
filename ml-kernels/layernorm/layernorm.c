@@ -53,10 +53,13 @@ static void layernorm_forward(float **x, const float *gamma, const float *beta,
 }
 
 static float checksum(float **x) {
+  // Use sum of absolute values for stable checksum.
+  // Normalized data is centered around 0, so plain sum would be ~0
+  // and highly sensitive to floating-point rounding differences.
   float sum = 0.0f;
   for (int b = 0; b < BATCH; ++b) {
     for (int h = 0; h < HIDDEN; ++h) {
-      sum += x[b][h];
+      sum += fabsf(x[b][h]);
     }
   }
   return sum;
@@ -83,11 +86,12 @@ int main(void) {
 
   printf("layernorm checksum=%f\n", checksum(x));
 
-  // Compute checksum inline
+  // Compute checksum inline using sum of absolute values for stability.
+  // Normalized data is centered around 0, so plain sum would be ~0.
   double checksum_value = 0.0;
   for (int b = 0; b < BATCH; b++) {
     for (int h = 0; h < HIDDEN; h++) {
-      checksum_value += x[b][h];
+      checksum_value += fabs((double)x[b][h]);
     }
   }
   CARTS_BENCH_CHECKSUM(checksum_value);

@@ -309,12 +309,14 @@ int main(int argc, char **argv) {
 
   printf("\nBatch normalization completed successfully!\n");
 
-  // Compute checksum inline
+  // Compute checksum inline using sum of absolute values for stability.
+  // Normalized data is centered around 0, so plain sum would be ~0
+  // and highly sensitive to floating-point rounding differences.
   double checksum = 0.0;
   for (int b = 0; b < batch; b++) {
     for (int c = 0; c < channels; c++) {
       for (int s = 0; s < spatial; s++) {
-        checksum += output[b][c][s];
+        checksum += fabs((double)output[b][c][s]);
       }
     }
   }

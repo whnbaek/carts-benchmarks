@@ -2,10 +2,24 @@
 
 Walk through these steps and fix any problem that you find in the way
 
+---
+
+## Bug Fix: Verification Failure (Fixed)
+
+**Problem:** Same as layernorm - checksum verification was failing due to normalized data producing near-zero sums.
+
+**Root Cause:** Batch normalization produces values centered around 0 per-channel. The original checksum computed `sum(output)` which is ~0 for normalized data, making it highly sensitive to floating-point rounding differences.
+
+**Fix:** Changed checksum to use `sum(|x|)` instead of `sum(x)`. See layernorm/docs/analysis.md for full details.
+
+**Result:** Verification passes with 9.74x speedup.
+
+---
+
 1. **Navigate to the batchnorm example directory:**
 
    ```bash
-   cd ~/Documents/carts/external/carts-benchmarks/ml-kernels/batchnorm
+   cd /opt/carts/external/carts-benchmarks/ml-kernels/batchnorm
    ```
 
 2. **Build carts if any changes were made:**

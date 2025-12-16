@@ -184,3 +184,8 @@ Walk through these steps and fix any problem that you find in the way
     carts execute poisson-task.c -O3 -DMINI_DATASET -I. -I../common -I../utilities
    ./poisson-task_arts
 ```
+
+5. **Run with carts benchmarks and check**
+```bash
+    carts benchmarks run kastors-jacobi/poisson-task --trace 
+```

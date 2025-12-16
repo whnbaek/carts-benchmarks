@@ -29,7 +29,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import typer
 from rich import box
@@ -103,6 +103,16 @@ class Status(str, Enum):
     CRASH = "crash"
     TIMEOUT = "timeout"
     SKIP = "skip"
+
+
+class Phase(str, Enum):
+    """Current phase of benchmark execution."""
+    PENDING = "pending"
+    BUILD_ARTS = "build_arts"
+    BUILD_OMP = "build_omp"
+    RUN_ARTS = "run_arts"
+    RUN_OMP = "run_omp"
+    DONE = "done"
 
 
 @dataclass
@@ -1519,8 +1529,16 @@ class BenchmarkRunner:
         timeout: int = DEFAULT_TIMEOUT,
         verify: bool = True,
         arts_config: Optional[Path] = None,
+        phase_callback: Optional[Callable[[Phase], None]] = None,
+        partial_results: Optional[Dict[str, Any]] = None,
     ) -> BenchmarkResult:
-        """Run complete pipeline for a single benchmark."""
+        """Run complete pipeline for a single benchmark.
+
+        Args:
+            phase_callback: Optional callback invoked when phase changes.
+                           Used by run_all to update live display.
+            partial_results: Optional dict to store partial results as phases complete.
+        """
         start_time = time.time()
         timestamp = datetime.now().isoformat()
         bench_path = self.benchmarks_dir / name
@@ -1531,10 +1549,18 @@ class BenchmarkRunner:
             self.clean_benchmark(name)
 
         # Build ARTS version
+        if phase_callback:
+            phase_callback(Phase.BUILD_ARTS)
         build_arts = self.build_benchmark(name, size, "arts", arts_config)
+        if partial_results is not None:
+            partial_results["build_arts"] = build_arts
 
         # Build OpenMP version
+        if phase_callback:
+            phase_callback(Phase.BUILD_OMP)
         build_omp = self.build_benchmark(name, size, "openmp", arts_config)
+        if partial_results is not None:
+            partial_results["build_omp"] = build_omp
 
         # Setup log files for debug=2
         logs_dir = bench_path / "logs"
@@ -1542,6 +1568,8 @@ class BenchmarkRunner:
         omp_log = logs_dir / "omp.log" if self.debug >= 2 else None
 
         # Run ARTS version - pass artsConfig env var so runtime uses same config as compile
+        if phase_callback:
+            phase_callback(Phase.RUN_ARTS)
         if build_arts.status == Status.PASS and build_arts.executable:
             arts_env = {"artsConfig": str(
                 arts_config)} if arts_config else None
@@ -1555,8 +1583,12 @@ class BenchmarkRunner:
                 stdout="",
                 stderr="Build failed",
             )
+        if partial_results is not None:
+            partial_results["run_arts"] = run_arts
 
         # Run OpenMP version
+        if phase_callback:
+            phase_callback(Phase.RUN_OMP)
         if build_omp.status == Status.PASS and build_omp.executable:
             run_omp = self.run_benchmark(
                 build_omp.executable, timeout, log_file=omp_log)
@@ -1651,27 +1683,44 @@ class BenchmarkRunner:
             return results_list
 
         # Live display mode - show table that updates as benchmarks complete
+        # Track current phase for live display updates
+        current_phase: List[Optional[Phase]] = [None]  # Use list for mutability in closure
+        current_bench: List[Optional[str]] = [None]
+        # Store partial results for current benchmark to show kernel times during RUN_OMP
+        current_partial: List[Optional[Dict[str, Any]]] = [None]
+
+        def phase_callback(phase: Phase) -> None:
+            """Update display when phase changes."""
+            current_phase[0] = phase
+            elapsed = time.time() - start_time
+            live.update(create_live_display(
+                benchmarks, results_dict, current_bench[0], elapsed, phase, current_partial[0]))
+
         with Live(
-            create_live_display(benchmarks, results_dict, None, 0),
+            create_live_display(benchmarks, results_dict, None, 0, None, None),
             console=self.console,
             refresh_per_second=4,
         ) as live:
             for bench in benchmarks:
+                current_bench[0] = bench
+                current_partial[0] = {}
                 # Update display to show current benchmark as in-progress
                 elapsed = time.time() - start_time
                 live.update(create_live_display(
-                    benchmarks, results_dict, bench, elapsed))
+                    benchmarks, results_dict, bench, elapsed, Phase.BUILD_ARTS, current_partial[0]))
 
-                # Run benchmark
+                # Run benchmark with phase callback and partial results storage
                 result = self.run_single(
-                    bench, size, timeout, verify, arts_config)
+                    bench, size, timeout, verify, arts_config, phase_callback, current_partial[0])
 
                 # Update results and refresh display
                 results_dict[bench] = result
                 results_list.append(result)
+                current_bench[0] = None
+                current_partial[0] = None
                 elapsed = time.time() - start_time
                 live.update(create_live_display(
-                    benchmarks, results_dict, None, elapsed))
+                    benchmarks, results_dict, None, elapsed, None, None))
 
         self.results = results_list
         return results_list
@@ -2082,6 +2131,8 @@ def create_live_table(
     benchmarks: List[str],
     results: Dict[str, BenchmarkResult],
     in_progress: Optional[str] = None,
+    current_phase: Optional[Phase] = None,
+    current_partial: Optional[Dict[str, Any]] = None,
 ) -> Table:
     """Create a live-updating table showing benchmark progress."""
     table = Table(box=box.ROUNDED, show_header=True, header_style="bold")
@@ -2165,14 +2216,82 @@ def create_live_table(
             table.add_row(bench, build, run_arts, run_omp, correct, speedup)
 
         elif bench == in_progress:
-            # Currently running - show spinner indicator
+            # Currently running - show phase-specific indicator
+            if current_phase == Phase.BUILD_ARTS:
+                build = "[yellow]⏳ ARTS...[/]"
+                run_arts = "[dim]-[/]"
+                run_omp = "[dim]-[/]"
+                correct = "[dim]-[/]"
+                speedup = "[dim]-[/]"
+            elif current_phase == Phase.BUILD_OMP:
+                # Show ARTS build time if available
+                if current_partial and "build_arts" in current_partial:
+                    build_arts_result = current_partial["build_arts"]
+                    if build_arts_result.status == Status.PASS:
+                        build = f"[green]✓[/] {build_arts_result.duration_sec:.1f}s [yellow]⏳ OMP...[/]"
+                    else:
+                        build = f"[red]✗[/] {build_arts_result.status.value} [yellow]⏳ OMP...[/]"
+                else:
+                    build = "[yellow]⏳ OMP...[/]"
+                run_arts = "[dim]-[/]"
+                run_omp = "[dim]-[/]"
+                correct = "[dim]-[/]"
+                speedup = "[dim]-[/]"
+            elif current_phase == Phase.RUN_ARTS:
+                # Show build time if available
+                if current_partial and "build_arts" in current_partial and "build_omp" in current_partial:
+                    build_arts_result = current_partial["build_arts"]
+                    build_omp_result = current_partial["build_omp"]
+                    if build_arts_result.status == Status.PASS and build_omp_result.status == Status.PASS:
+                        build = f"[green]✓[/] {build_arts_result.duration_sec + build_omp_result.duration_sec:.1f}s"
+                    else:
+                        build = f"[red]✗[/] {build_arts_result.status.value}/{build_omp_result.status.value}"
+                else:
+                    build = "[green]✓[/]"
+                run_arts = "[yellow]⏳ running...[/]"
+                run_omp = "[dim]-[/]"
+                correct = "[dim]-[/]"
+                speedup = "[dim]-[/]"
+            elif current_phase == Phase.RUN_OMP:
+                # Show build time if available
+                if current_partial and "build_arts" in current_partial and "build_omp" in current_partial:
+                    build_arts_result = current_partial["build_arts"]
+                    build_omp_result = current_partial["build_omp"]
+                    if build_arts_result.status == Status.PASS and build_omp_result.status == Status.PASS:
+                        build = f"[green]✓[/] {build_arts_result.duration_sec + build_omp_result.duration_sec:.1f}s"
+                    else:
+                        build = f"[red]✗[/] {build_arts_result.status.value}/{build_omp_result.status.value}"
+                else:
+                    build = "[green]✓[/]"
+                # ARTS run completed, show kernel time if available in partial results
+                if current_partial and "run_arts" in current_partial:
+                    run_arts_result = current_partial["run_arts"]
+                    arts_kernel, arts_kernel_str = format_kernel_time(run_arts_result)
+                    if run_arts_result.status == Status.PASS:
+                        if arts_kernel is not None:
+                            run_arts = f"{status_symbol(run_arts_result.status)} {arts_kernel_str}"
+                        else:
+                            run_arts = f"{status_symbol(run_arts_result.status)} {run_arts_result.duration_sec:.2f}s*"
+                    else:
+                        run_arts = f"{status_symbol(run_arts_result.status)} {run_arts_result.status.value}"
+                else:
+                    run_arts = "[green]✓[/]"
+                run_omp = "[yellow]⏳ running...[/]"
+                correct = "[dim]-[/]"
+                speedup = "[dim]-[/]"
+            else:
+                build = "[yellow]⏳...[/]"
+                run_arts = "[dim]-[/]"
+                run_omp = "[dim]-[/]"
+                correct = "[dim]-[/]"
+                speedup = "[dim]-[/]"
             table.add_row(
                 f"[bold]{bench}[/]",
-                "[yellow]\u23f3...[/]",
-                "[dim]-[/]",
-                "[dim]-[/]",
-                "[dim]-[/]",
-                "[dim]-[/]",
+                build,
+                run_arts,
+                run_omp,
+                correct,
+                speedup,
             )
         else:
             # Pending - show placeholder
@@ -2222,9 +2341,11 @@ def create_live_display(
     results: Dict[str, BenchmarkResult],
     in_progress: Optional[str],
     elapsed: float,
+    current_phase: Optional[Phase] = None,
+    current_partial: Optional[Dict[str, Any]] = None,
 ) -> Group:
     """Create the complete live display (table + summary)."""
-    table = create_live_table(benchmarks, results, in_progress)
+    table = create_live_table(benchmarks, results, in_progress, current_phase, current_partial)
     summary = create_live_summary(results, len(benchmarks), elapsed)
     return Group(table, summary)
 

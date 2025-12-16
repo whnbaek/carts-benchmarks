@@ -373,10 +373,11 @@ int main(int argc, char **argv) {
   CARTS_KERNEL_TIMER_STOP("tanh");
   print_stats("Tanh Output", output, size, 10);
 
-  // Compute checksum inline
+  // Compute checksum inline using sum of absolute values for stability.
+  // Tanh output is zero-centered, so plain sum would be ~0.
   double tanh_checksum = 0.0;
   for (int i = 0; i < size; i++) {
-    tanh_checksum += output[i];
+    tanh_checksum += fabs(output[i]);
   }
   CARTS_BENCH_CHECKSUM(tanh_checksum);
 

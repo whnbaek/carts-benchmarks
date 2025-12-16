@@ -225,5 +225,8 @@ Walk through these steps and fix any problem that you find in the way
     carts execute convolution-2d.c -O3 -DMINI_DATASET -I. -I../common -I../utilities
    ./convolution-2d_arts
 ```
-
+5. **Test with carts examples:**
+   ```bash
+   carts benchmarks run polybench/convolution-2d --trace --size=small
+   ```
 ---
