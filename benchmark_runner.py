@@ -4306,6 +4306,8 @@ def run(
     if not quiet:
         console.print(f"\n[bold]CARTS Benchmark Runner v{VERSION}[/]")
         console.print("\u2501" * 30)
+
+        # Show benchmark runner config
         config_items = [f"size={size}", f"timeout={timeout}s",
                         f"verify={verify}", f"clean={clean}"]
         if threads_list:
@@ -4324,6 +4326,51 @@ def run(
             config_items.append(
                 f"counters={counters} ({COUNTER_LEVELS.get(counters, 'unknown')})")
         console.print(f"Config: {', '.join(config_items)}")
+
+        # Show effective ARTS configuration
+        if bench_list:
+            # Multiple benchmarks without custom config: each uses its own local config
+            if len(bench_list) > 1 and not arts_config:
+                console.print("ARTS Config: using local")
+            else:
+                # Single benchmark or custom config: show specific values
+                sample_bench = bench_list[0]
+                bench_path = runner.benchmarks_dir / sample_bench
+
+                # Determine effective config file and source in one pass
+                if arts_config:
+                    effective_config = arts_config
+                    config_source = "custom"
+                else:
+                    bench_cfg = bench_path / "arts.cfg"
+                    if bench_cfg.exists():
+                        effective_config = bench_cfg
+                        config_source = "local"
+                    else:
+                        effective_config = DEFAULT_ARTS_CONFIG
+                        config_source = "default"
+
+                # Parse ARTS config values once
+                cfg = parse_arts_cfg(effective_config)
+                arts_threads = int(cfg.get("threads", "1"))
+                arts_nodes = int(cfg.get("nodeCount", "1"))
+                arts_launcher = cfg.get("launcher", "ssh")
+                arts_nodes_list = [n.strip() for n in cfg.get("nodes", "localhost").split(",") if n.strip()]
+
+                # Build config display items efficiently
+                arts_config_items = [f"arts-threads={arts_threads}",
+                                    f"arts-nodes={arts_nodes}",
+                                    f"arts-launcher={arts_launcher}"]
+
+                # Only show node list if it's not just localhost
+                if arts_nodes_list != ["localhost"]:
+                    node_display = ','.join(arts_nodes_list[:3])
+                    if len(arts_nodes_list) > 3:
+                        node_display += "..."
+                    arts_config_items.append(f"arts-node-list=[{node_display}]")
+
+                console.print(f"ARTS Config ({config_source}): {', '.join(arts_config_items)}")
+
         console.print(f"Benchmarks: {len(bench_list)}\n")
 
     # Run benchmarks
