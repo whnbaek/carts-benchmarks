@@ -258,6 +258,58 @@ When using `--output`, results are exported as JSON with the following structure
 }
 ```
 
+## ARTS Configuration Override
+
+ARTS uses a three-tier configuration fallback system when no explicit config is specified:
+
+### Configuration Discovery Priority
+
+1. **Custom config** (`--arts-config /path/to/config.cfg`)
+2. **Local config** (`benchmark_dir/arts.cfg`)
+3. **Global default config** (`carts-benchmarks/arts.cfg`)
+
+If no `--arts-config` is provided, CARTS first looks for an `arts.cfg` file in the benchmark directory. If that doesn't exist, it falls back to the global default configuration.
+
+The runner displays the effective ARTS configuration before execution:
+- Single benchmark: shows specific config values (threads, nodes, launcher)
+- Multiple benchmarks without `--arts-config`: shows "ARTS Config: using local"
+- Multiple benchmarks with `--arts-config`: shows specific custom config values
+
+### Command-Line Overrides
+
+```bash
+# Override launcher and node count
+carts benchmarks run polybench/gemm --launcher slurm --node-count 4
+
+# Override thread count and launcher
+carts benchmarks run polybench/gemm --threads 32 --launcher ssh --node-count 2
+
+# Override OpenMP thread count separately
+carts benchmarks run polybench/gemm --threads 16 --omp-threads 8
+```
+
+### Custom Configuration Files
+
+```bash
+# Use a completely custom arts.cfg file
+carts benchmarks run polybench/gemm --arts-config /path/to/my_config.cfg
+
+# Example custom config for multi-node execution
+echo -e "[ARTS]\nthreads=64\nlauncher=slurm\nnodeCount=4\nnodes=node001,node002,node003,node004" > multi.cfg
+carts benchmarks run polybench/gemm --arts-config multi.cfg
+```
+
+### Overrideable Parameters
+
+| Parameter | CLI Option | Description |
+|-----------|------------|-------------|
+| `launcher` | `--launcher` | Job launcher (ssh, slurm, lsf) |
+| `nodeCount` | `--node-count`, `-n` | Number of compute nodes |
+| `threads` | `--threads` | ARTS worker threads per node |
+| `omp-threads` | `--omp-threads` | OpenMP threads (separate from ARTS threads) |
+
+Command-line options take precedence over any configuration file settings.
+
 ### Key Fields
 
 | Field | Description |
