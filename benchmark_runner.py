@@ -19,6 +19,7 @@ import json
 import os
 import platform
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -286,7 +287,8 @@ class BenchmarkResult:
     artifacts: Artifacts
     timestamp: str
     total_duration_sec: float
-    size_params: Optional[str] = None  # Actual CFLAGS used for this size (e.g., "-DNI=2000 -DNJ=2000")
+    # Actual CFLAGS used for this size (e.g., "-DNI=2000 -DNJ=2000")
+    size_params: Optional[str] = None
 
 
 # ============================================================================
@@ -504,14 +506,16 @@ def generate_arts_config(
             content = re.sub(
                 r'^nodes\s*=.*$', f'nodes={truncated_str}', content, flags=re.MULTILINE)
         else:
-            content = content.replace('[ARTS]', f'[ARTS]\nnodes={truncated_str}')
+            content = content.replace(
+                '[ARTS]', f'[ARTS]\nnodes={truncated_str}')
 
         # Update nodeCount
         if re.search(r'^nodeCount\s*=', content, re.MULTILINE):
             content = re.sub(
                 r'^nodeCount\s*=\s*\d+', f'nodeCount={nodes_override}', content, flags=re.MULTILINE)
         else:
-            content = content.replace('[ARTS]', f'[ARTS]\nnodeCount={nodes_override}')
+            content = content.replace(
+                '[ARTS]', f'[ARTS]\nnodeCount={nodes_override}')
 
         # Update masterNode to first node in truncated list
         if re.search(r'^masterNode\s*=', content, re.MULTILINE):
@@ -530,7 +534,8 @@ def generate_arts_config(
         content += f"\ncounterFolder={counter_dir}\ncounterStartPoint=1\n"
 
     # Determine node count for filename
-    node_count = nodes_override if nodes_override else get_arts_cfg_int(base_path, "nodeCount") or 1
+    node_count = nodes_override if nodes_override else get_arts_cfg_int(
+        base_path, "nodeCount") or 1
 
     # Write to shared directory (NOT /tmp which is node-local in multi-node setups)
     # The carts-benchmarks directory is shared across all nodes via mounted volume
@@ -737,7 +742,8 @@ def copy_build_artifacts(
 
     # Copy arts.cfg to config root (it's the build INPUT).
     # Prefer the effective config actually used for this build/run.
-    cfg_src = arts_cfg_used if arts_cfg_used and arts_cfg_used.exists() else (bench_path / "arts.cfg")
+    cfg_src = arts_cfg_used if arts_cfg_used and arts_cfg_used.exists() else (
+        bench_path / "arts.cfg")
     if cfg_src.exists():
         dest = config_dir / "arts.cfg"
         shutil.copy2(cfg_src, dest)
@@ -901,14 +907,60 @@ class BenchmarkRunner:
         if not var_name:
             return None
 
-        # Look for VAR_NAME ?= ... or VAR_NAME := ...
-        import re
-        pattern = rf'^{var_name}\s*[?:]?=\s*(.+)$'
+        return self._extract_make_var(content, var_name)
+
+    def get_run_args(self, bench_path: Path, size: str) -> List[str]:
+        """Extract run-time arguments for a given size from the Makefile."""
+        makefile = bench_path / "Makefile"
+        if not makefile.exists():
+            return []
+
+        content = makefile.read_text()
+
+        # Map size to args variable name
+        size_var_map = {
+            "small": "SMALL_ARGS",
+            "medium": "MEDIUM_ARGS",
+            "large": "LARGE_ARGS",
+            "extralarge": "EXTRALARGE_ARGS",
+            "mini": "MINI_ARGS",
+            "standard": "STANDARD_ARGS",
+        }
+
+        var_name = size_var_map.get(size.lower())
+        value = self._extract_make_var(content, var_name) if var_name else None
+        if not value:
+            value = self._extract_make_var(content, "RUN_ARGS")
+        if not value:
+            return []
+
+        return shlex.split(value)
+
+    def get_verify_tolerance(self, bench_path: Path) -> float:
+        """Extract a per-benchmark verification tolerance from the Makefile."""
+        makefile = bench_path / "Makefile"
+        if not makefile.exists():
+            return DEFAULT_TOLERANCE
+
+        content = makefile.read_text()
+        value = self._extract_make_var(content, "VERIFY_TOLERANCE")
+        if not value:
+            value = self._extract_make_var(content, "TOLERANCE")
+        if not value:
+            return DEFAULT_TOLERANCE
+
+        try:
+            return float(value)
+        except ValueError:
+            return DEFAULT_TOLERANCE
+
+    def _extract_make_var(self, content: str, var_name: str) -> Optional[str]:
+        """Return the value of a Makefile variable if present."""
+        pattern = rf'^{re.escape(var_name)}\s*[?:]?=\s*(.+)$'
         for line in content.splitlines():
             match = re.match(pattern, line.strip())
             if match:
                 return match.group(1).strip()
-
         return None
 
     def build_benchmark(
@@ -1090,6 +1142,8 @@ class BenchmarkRunner:
             self.clean_benchmark(name)
 
         bench_path = self.benchmarks_dir / name
+        run_args = self.get_run_args(bench_path, size)
+        verify_tolerance = self.get_verify_tolerance(bench_path)
 
         # Determine effective config template:
         # 1. Use explicitly provided base_config
@@ -1204,6 +1258,7 @@ class BenchmarkRunner:
                         launcher=desired_launcher,
                         node_count=desired_nodes,
                         threads=threads,
+                        args=run_args,
                         log_file=arts_log,
                     )
                 else:
@@ -1218,7 +1273,12 @@ class BenchmarkRunner:
                 # Run OpenMP version (needs OMP_NUM_THREADS env var)
                 if build_omp.status == Status.PASS and build_omp.executable:
                     run_omp = self.run_benchmark(
-                        build_omp.executable, timeout, env=env, log_file=omp_log)
+                        build_omp.executable,
+                        timeout,
+                        env=env,
+                        args=run_args,
+                        log_file=omp_log,
+                    )
                 else:
                     run_omp = RunResult(
                         status=Status.SKIP,
@@ -1232,7 +1292,9 @@ class BenchmarkRunner:
                 timing = self.calculate_timing(run_arts, run_omp)
 
                 # Verify correctness for all thread counts
-                verification = self.verify_correctness(run_arts, run_omp)
+                verification = self.verify_correctness(
+                    run_arts, run_omp, tolerance=verify_tolerance
+                )
 
                 # Collect artifacts from benchmark source directory
                 artifacts = self.collect_artifacts(bench_path)
@@ -1302,6 +1364,7 @@ class BenchmarkRunner:
         launcher: str = "ssh",
         node_count: int = 1,
         threads: int = 1,
+        args: Optional[List[str]] = None,
         log_file: Optional[Path] = None,
     ) -> RunResult:
         """Execute a benchmark and capture output.
@@ -1313,6 +1376,7 @@ class BenchmarkRunner:
             launcher: ARTS launcher type. For 'slurm', wraps executable in srun.
             node_count: Number of nodes for distributed execution (slurm only).
             threads: Number of threads per node (for srun --cpus-per-task).
+            args: Optional list of command-line arguments to pass to the executable.
             log_file: Optional path to write full output (for debug=2).
         """
         if not executable or not os.path.exists(executable):
@@ -1343,6 +1407,8 @@ class BenchmarkRunner:
         else:
             # Local or SSH launcher: run directly (ARTS handles distribution for SSH)
             cmd = [executable]
+        if args:
+            cmd.extend(args)
 
         # Debug output level 1: show commands
         if self.debug >= 1:
@@ -1793,7 +1859,8 @@ class BenchmarkRunner:
         # Build ARTS version
         if phase_callback:
             phase_callback(Phase.BUILD_ARTS)
-        build_arts = self.build_benchmark(name, size, "arts", effective_arts_cfg)
+        build_arts = self.build_benchmark(
+            name, size, "arts", effective_arts_cfg)
         if partial_results is not None:
             partial_results["build_arts"] = build_arts
 
@@ -1808,6 +1875,8 @@ class BenchmarkRunner:
         logs_dir = bench_path / "logs"
         arts_log = logs_dir / "arts.log" if self.debug >= 2 else None
         omp_log = logs_dir / "omp.log" if self.debug >= 2 else None
+        run_args = self.get_run_args(bench_path, size)
+        verify_tolerance = self.get_verify_tolerance(bench_path)
 
         # Ensure init timing is reported and align OMP wait/spin policy with ARTS.
         common_env: Dict[str, str] = {}
@@ -1828,6 +1897,7 @@ class BenchmarkRunner:
                 launcher=desired_launcher,
                 node_count=desired_nodes,
                 threads=desired_threads,
+                args=run_args,
                 log_file=arts_log,
             )
         else:
@@ -1853,7 +1923,12 @@ class BenchmarkRunner:
             if "OMP_WAIT_POLICY" not in os.environ:
                 omp_env["OMP_WAIT_POLICY"] = "ACTIVE"
             run_omp = self.run_benchmark(
-                build_omp.executable, timeout, env=omp_env, log_file=omp_log)
+                build_omp.executable,
+                timeout,
+                env=omp_env,
+                args=run_args,
+                log_file=omp_log,
+            )
         else:
             run_omp = RunResult(
                 status=Status.SKIP,
@@ -1881,7 +1956,9 @@ class BenchmarkRunner:
 
         # Verify correctness
         if verify:
-            verification = self.verify_correctness(run_arts, run_omp)
+            verification = self.verify_correctness(
+                run_arts, run_omp, tolerance=verify_tolerance
+            )
         else:
             verification = VerificationResult(
                 correct=False,
@@ -1970,7 +2047,8 @@ class BenchmarkRunner:
 
         # Live display mode - show table that updates as benchmarks complete
         # Track current phase for live display updates
-        current_phase: List[Optional[Phase]] = [None]  # Use list for mutability in closure
+        current_phase: List[Optional[Phase]] = [
+            None]  # Use list for mutability in closure
         current_bench: List[Optional[str]] = [None]
         # Store partial results for current benchmark to show kernel times during RUN_OMP
         current_partial: List[Optional[Dict[str, Any]]] = [None]
@@ -2539,8 +2617,10 @@ def create_init_e2e_bar_chart(results: List[BenchmarkResult], width: int = 30) -
     for r in results:
         table.add_row(
             r.name,
-            _render_init_e2e_bar(r.timing.arts_init_sec, r.timing.arts_e2e_sec, max_total, width),
-            _render_init_e2e_bar(r.timing.omp_init_sec, r.timing.omp_e2e_sec, max_total, width),
+            _render_init_e2e_bar(r.timing.arts_init_sec,
+                                 r.timing.arts_e2e_sec, max_total, width),
+            _render_init_e2e_bar(r.timing.omp_init_sec,
+                                 r.timing.omp_e2e_sec, max_total, width),
         )
 
     table.caption = "[dim]Bar colors: init=red, e2e=green[/]"
@@ -2636,10 +2716,13 @@ def _write_per_benchmark_timeline_svg(
 
     title = _svg_escape(benchmark)
     lines: List[str] = []
-    lines.append(f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}">')
+    lines.append(
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}">')
     lines.append("<style>")
-    lines.append('text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; font-size: 12px; }')
-    lines.append('.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }')
+    lines.append(
+        'text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; font-size: 12px; }')
+    lines.append(
+        '.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }')
     lines.append(".dim { fill: #555; }")
     lines.append(".light { fill: #888; }")
     lines.append("</style>")
@@ -2649,47 +2732,62 @@ def _write_per_benchmark_timeline_svg(
     if speedup is not None and speedup > 0:
         sp = f"  |  speedup={speedup:.2f}x ({_svg_escape(speedup_basis)})"
     lines.append(f'<text x="{pad}" y="{22}" font-size="16">{title}{sp}</text>')
-    lines.append(f'<text x="{pad}" y="{40}" class="dim mono">local x-scale: 0–{max_total:.6f}s</text>')
+    lines.append(
+        f'<text x="{pad}" y="{40}" class="dim mono">local x-scale: 0–{max_total:.6f}s</text>')
 
     # Legend (init + kernel/other + e2e segments)
     legend_x = pad
     legend_y = h - 22
-    lines.append(f'<rect x="{legend_x}" y="{legend_y-10}" width="12" height="8" fill="{init_color}" />')
-    lines.append(f'<text x="{legend_x+18}" y="{legend_y-3}" class="dim mono">init</text>')
-    lines.append(f'<rect x="{legend_x+70}" y="{legend_y-10}" width="12" height="8" fill="{kernel_color}" />')
-    lines.append(f'<text x="{legend_x+88}" y="{legend_y-3}" class="dim mono">kernel</text>')
-    lines.append(f'<rect x="{legend_x+160}" y="{legend_y-10}" width="12" height="8" fill="{other_color}" />')
-    lines.append(f'<text x="{legend_x+178}" y="{legend_y-3}" class="dim mono">other(e2e-kernel)</text>')
+    lines.append(
+        f'<rect x="{legend_x}" y="{legend_y-10}" width="12" height="8" fill="{init_color}" />')
+    lines.append(
+        f'<text x="{legend_x+18}" y="{legend_y-3}" class="dim mono">init</text>')
+    lines.append(
+        f'<rect x="{legend_x+70}" y="{legend_y-10}" width="12" height="8" fill="{kernel_color}" />')
+    lines.append(
+        f'<text x="{legend_x+88}" y="{legend_y-3}" class="dim mono">kernel</text>')
+    lines.append(
+        f'<rect x="{legend_x+160}" y="{legend_y-10}" width="12" height="8" fill="{other_color}" />')
+    lines.append(
+        f'<text x="{legend_x+178}" y="{legend_y-3}" class="dim mono">other(e2e-kernel)</text>')
 
     lx = legend_x + 360
     for i, seg in enumerate(seg_order[:6]):  # keep legend compact
         c = seg_color[seg]
-        lines.append(f'<rect x="{lx}" y="{legend_y-10}" width="12" height="8" fill="{c}" />')
-        lines.append(f'<text x="{lx+18}" y="{legend_y-3}" class="dim mono">{_svg_escape(seg)}</text>')
+        lines.append(
+            f'<rect x="{lx}" y="{legend_y-10}" width="12" height="8" fill="{c}" />')
+        lines.append(
+            f'<text x="{lx+18}" y="{legend_y-3}" class="dim mono">{_svg_escape(seg)}</text>')
         lx += 160
         if lx > w - 240:
             break
 
     # Axis ticks (independent scale)
-    lines.append(f'<line x1="{bar_x}" y1="{axis_y}" x2="{bar_x+bar_w}" y2="{axis_y}" stroke="#bbb" stroke-width="1" />')
+    lines.append(
+        f'<line x1="{bar_x}" y1="{axis_y}" x2="{bar_x+bar_w}" y2="{axis_y}" stroke="#bbb" stroke-width="1" />')
     for t in [0.0, 0.25, 0.5, 0.75, 1.0]:
         x = bar_x + bar_w * t
-        lines.append(f'<line x1="{x}" y1="{axis_y-4}" x2="{x}" y2="{axis_y+4}" stroke="#bbb" stroke-width="1" />')
-        lines.append(f'<text x="{x}" y="{axis_y+18}" text-anchor="middle" class="light mono">{(max_total*t):.3f}</text>')
+        lines.append(
+            f'<line x1="{x}" y1="{axis_y-4}" x2="{x}" y2="{axis_y+4}" stroke="#bbb" stroke-width="1" />')
+        lines.append(
+            f'<text x="{x}" y="{axis_y+18}" text-anchor="middle" class="light mono">{(max_total*t):.3f}</text>')
 
     def draw_runtime_row(y: int, label: str, init_map: Dict[str, float], e2e_map: Dict[str, float]) -> None:
         init_v = sum(init_map.values()) if init_map else 0.0
         e2e_total = sum(e2e_map.values()) if e2e_map else 0.0
         total_v = init_v + e2e_total
 
-        lines.append(f'<text x="{pad}" y="{y+12}" class="mono">{_svg_escape(label)}</text>')
+        lines.append(
+            f'<text x="{pad}" y="{y+12}" class="mono">{_svg_escape(label)}</text>')
         # Background bar
-        lines.append(f'<rect x="{bar_x}" y="{y}" width="{bar_w}" height="{bar_h}" fill="#f1f1f1" />')
+        lines.append(
+            f'<rect x="{bar_x}" y="{y}" width="{bar_w}" height="{bar_h}" fill="#f1f1f1" />')
 
         x0 = bar_x
         if init_v > 0:
             iw = xscale(init_v)
-            lines.append(f'<rect x="{x0}" y="{y}" width="{iw:.2f}" height="{bar_h}" fill="{init_color}"><title>init: {init_v:.6f}s</title></rect>')
+            lines.append(
+                f'<rect x="{x0}" y="{y}" width="{iw:.2f}" height="{bar_h}" fill="{init_color}"><title>init: {init_v:.6f}s</title></rect>')
             x0 += iw
 
         for seg in seg_order:
@@ -2700,16 +2798,20 @@ def _write_per_benchmark_timeline_svg(
             c = seg_color[seg]
             pct = (v / total_v * 100.0) if total_v > 0 else 0.0
             title_txt = f"{seg}: {v:.6f}s ({pct:.1f}%)"
-            lines.append(f'<rect x="{x0:.2f}" y="{y}" width="{sw:.2f}" height="{bar_h}" fill="{c}"><title>{_svg_escape(title_txt)}</title></rect>')
+            lines.append(
+                f'<rect x="{x0:.2f}" y="{y}" width="{sw:.2f}" height="{bar_h}" fill="{c}"><title>{_svg_escape(title_txt)}</title></rect>')
             # Inline label only if it fits well (reduce clutter)
             if sw >= 70:
-                lines.append(f'<text x="{x0 + sw/2:.2f}" y="{y+11}" text-anchor="middle" fill="#000" class="mono">{v:.3f}s</text>')
+                lines.append(
+                    f'<text x="{x0 + sw/2:.2f}" y="{y+11}" text-anchor="middle" fill="#000" class="mono">{v:.3f}s</text>')
             x0 += sw
 
         # Totals on the right
         tx = bar_x + bar_w + 10
-        lines.append(f'<text x="{tx}" y="{y+12}" class="dim mono">total {total_v:.6f}s</text>')
-        lines.append(f'<text x="{tx}" y="{y+26}" class="light mono">init {init_v:.6f}s + e2e {e2e_total:.6f}s</text>')
+        lines.append(
+            f'<text x="{tx}" y="{y+12}" class="dim mono">total {total_v:.6f}s</text>')
+        lines.append(
+            f'<text x="{tx}" y="{y+26}" class="light mono">init {init_v:.6f}s + e2e {e2e_total:.6f}s</text>')
 
     draw_runtime_row(arts_y, "ARTS", arts_init, arts_e2e)
     draw_runtime_row(omp_y, "OMP", omp_init, omp_e2e)
@@ -2717,29 +2819,38 @@ def _write_per_benchmark_timeline_svg(
     # Breakdown rows: init + other(e2e-kernel) + kernel (consistent across benchmarks).
     def draw_breakdown_row(y: int, label: str, init_v: float, other_v: float, kernel_v: float) -> None:
         total_v = init_v + other_v + kernel_v
-        lines.append(f'<text x="{pad}" y="{y+12}" class="mono">{_svg_escape(label)}</text>')
-        lines.append(f'<rect x="{bar_x}" y="{y}" width="{bar_w}" height="{bar_h}" fill="#f1f1f1" />')
+        lines.append(
+            f'<text x="{pad}" y="{y+12}" class="mono">{_svg_escape(label)}</text>')
+        lines.append(
+            f'<rect x="{bar_x}" y="{y}" width="{bar_w}" height="{bar_h}" fill="#f1f1f1" />')
 
         x0 = bar_x
         if init_v > 0:
             iw = xscale(init_v)
-            lines.append(f'<rect x="{x0}" y="{y}" width="{iw:.2f}" height="{bar_h}" fill="{init_color}"><title>init: {init_v:.6f}s</title></rect>')
+            lines.append(
+                f'<rect x="{x0}" y="{y}" width="{iw:.2f}" height="{bar_h}" fill="{init_color}"><title>init: {init_v:.6f}s</title></rect>')
             x0 += iw
         if other_v > 0:
             ow = xscale(other_v)
-            lines.append(f'<rect x="{x0:.2f}" y="{y}" width="{ow:.2f}" height="{bar_h}" fill="{other_color}"><title>other (e2e-kernel): {other_v:.6f}s</title></rect>')
+            lines.append(
+                f'<rect x="{x0:.2f}" y="{y}" width="{ow:.2f}" height="{bar_h}" fill="{other_color}"><title>other (e2e-kernel): {other_v:.6f}s</title></rect>')
             x0 += ow
         if kernel_v > 0:
             kw = xscale(kernel_v)
-            lines.append(f'<rect x="{x0:.2f}" y="{y}" width="{kw:.2f}" height="{bar_h}" fill="{kernel_color}"><title>kernel: {kernel_v:.6f}s</title></rect>')
+            lines.append(
+                f'<rect x="{x0:.2f}" y="{y}" width="{kw:.2f}" height="{bar_h}" fill="{kernel_color}"><title>kernel: {kernel_v:.6f}s</title></rect>')
             x0 += kw
 
         tx = bar_x + bar_w + 10
-        lines.append(f'<text x="{tx}" y="{y+12}" class="dim mono">total {total_v:.6f}s</text>')
-        lines.append(f'<text x="{tx}" y="{y+26}" class="light mono">init {init_v:.6f}s | other {other_v:.6f}s | kernel {kernel_v:.6f}s</text>')
+        lines.append(
+            f'<text x="{tx}" y="{y+12}" class="dim mono">total {total_v:.6f}s</text>')
+        lines.append(
+            f'<text x="{tx}" y="{y+26}" class="light mono">init {init_v:.6f}s | other {other_v:.6f}s | kernel {kernel_v:.6f}s</text>')
 
-    draw_breakdown_row(arts_b_y, "ARTS breakdown", arts_init_total, arts_other_total, arts_kernel_total)
-    draw_breakdown_row(omp_b_y, "OMP breakdown", omp_init_total, omp_other_total, omp_kernel_total)
+    draw_breakdown_row(arts_b_y, "ARTS breakdown",
+                       arts_init_total, arts_other_total, arts_kernel_total)
+    draw_breakdown_row(omp_b_y, "OMP breakdown", omp_init_total,
+                       omp_other_total, omp_kernel_total)
 
     lines.append("</svg>")
     svg_path.write_text("\n".join(lines))
@@ -2756,15 +2867,20 @@ def _write_small_multiples_svg(groups: List[Dict[str, Any]], svg_path: Path) -> 
     w = 1200
     h = 60 + panel_h * len(groups) + 30
     lines: List[str] = []
-    lines.append(f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}">')
+    lines.append(
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}">')
     lines.append("<style>")
-    lines.append('text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; font-size: 12px; }')
-    lines.append('.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }')
+    lines.append(
+        'text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; font-size: 12px; }')
+    lines.append(
+        '.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }')
     lines.append(".dim { fill: #555; }")
     lines.append(".light { fill: #888; }")
     lines.append("</style>")
-    lines.append(f'<text x="{pad}" y="24" font-size="16">Init + E2E timeline (per-benchmark local scale)</text>')
-    lines.append(f'<text x="{pad}" y="44" class="dim mono">Note: each panel has an independent x-axis scale for readability.</text>')
+    lines.append(
+        f'<text x="{pad}" y="24" font-size="16">Init + E2E timeline (per-benchmark local scale)</text>')
+    lines.append(
+        f'<text x="{pad}" y="44" class="dim mono">Note: each panel has an independent x-axis scale for readability.</text>')
 
     y0 = 60
     for i, g in enumerate(groups):
@@ -2787,20 +2903,26 @@ def _write_small_multiples_svg(groups: List[Dict[str, Any]], svg_path: Path) -> 
             return bar_w * (v / max(scale_max, 1e-12))
 
         # Panel background
-        lines.append(f'<rect x="{pad}" y="{y}" width="{w-2*pad}" height="{panel_h-6}" fill="#fafafa" stroke="#eee" />')
+        lines.append(
+            f'<rect x="{pad}" y="{y}" width="{w-2*pad}" height="{panel_h-6}" fill="#fafafa" stroke="#eee" />')
 
         sp_txt = ""
         if sp is not None and float(sp) > 0:
             sp_txt = f"  speedup={float(sp):.2f}x ({_svg_escape(sp_basis)})"
-        lines.append(f'<text x="{pad+6}" y="{y+18}" class="mono">{_svg_escape(bench)}{sp_txt}</text>')
-        lines.append(f'<text x="{pad+6}" y="{y+34}" class="light mono">scale: 0–{scale_max:.4f}s</text>')
+        lines.append(
+            f'<text x="{pad+6}" y="{y+18}" class="mono">{_svg_escape(bench)}{sp_txt}</text>')
+        lines.append(
+            f'<text x="{pad+6}" y="{y+34}" class="light mono">scale: 0–{scale_max:.4f}s</text>')
 
         # Axis
-        lines.append(f'<line x1="{bar_x}" y1="{axis_y}" x2="{bar_x+bar_w}" y2="{axis_y}" stroke="#bbb" stroke-width="1" />')
+        lines.append(
+            f'<line x1="{bar_x}" y1="{axis_y}" x2="{bar_x+bar_w}" y2="{axis_y}" stroke="#bbb" stroke-width="1" />')
         for t in [0.0, 0.5, 1.0]:
             x = bar_x + bar_w * t
-            lines.append(f'<line x1="{x}" y1="{axis_y-4}" x2="{x}" y2="{axis_y+4}" stroke="#bbb" stroke-width="1" />')
-            lines.append(f'<text x="{x}" y="{axis_y+18}" text-anchor="middle" class="light mono">{(scale_max*t):.3f}</text>')
+            lines.append(
+                f'<line x1="{x}" y1="{axis_y-4}" x2="{x}" y2="{axis_y+4}" stroke="#bbb" stroke-width="1" />')
+            lines.append(
+                f'<text x="{x}" y="{axis_y+18}" text-anchor="middle" class="light mono">{(scale_max*t):.3f}</text>')
 
         # Draw rows using consistent segments (init + other + kernel)
         init_color = "#D62728"
@@ -2808,8 +2930,10 @@ def _write_small_multiples_svg(groups: List[Dict[str, Any]], svg_path: Path) -> 
         kernel_color = "#1F77B4"
 
         def draw_row(y_row: int, label: str, segments: List[Tuple[str, float]], total: float) -> None:
-            lines.append(f'<text x="{pad+6}" y="{y_row+12}" class="mono">{_svg_escape(label)}</text>')
-            lines.append(f'<rect x="{bar_x}" y="{y_row}" width="{bar_w}" height="14" fill="#f1f1f1" />')
+            lines.append(
+                f'<text x="{pad+6}" y="{y_row+12}" class="mono">{_svg_escape(label)}</text>')
+            lines.append(
+                f'<rect x="{bar_x}" y="{y_row}" width="{bar_w}" height="14" fill="#f1f1f1" />')
             xcur = bar_x
             for name, val in segments:
                 if val <= 0:
@@ -2825,9 +2949,11 @@ def _write_small_multiples_svg(groups: List[Dict[str, Any]], svg_path: Path) -> 
                     c = other_color
                     title_txt = "other (e2e-kernel)"
                 pct = (val / total * 100.0) if total > 0 else 0.0
-                lines.append(f'<rect x="{xcur:.2f}" y="{y_row}" width="{sw:.2f}" height="14" fill="{c}"><title>{_svg_escape(title_txt)}: {val:.6f}s ({pct:.1f}%)</title></rect>')
+                lines.append(
+                    f'<rect x="{xcur:.2f}" y="{y_row}" width="{sw:.2f}" height="14" fill="{c}"><title>{_svg_escape(title_txt)}: {val:.6f}s ({pct:.1f}%)</title></rect>')
                 xcur += sw
-            lines.append(f'<text x="{bar_x+bar_w+10}" y="{y_row+12}" class="dim mono">{total:.4f}s</text>')
+            lines.append(
+                f'<text x="{bar_x+bar_w+10}" y="{y_row+12}" class="dim mono">{total:.4f}s</text>')
 
         draw_row(arts_y, "ARTS", g["arts_segments"], g["arts_total"])
         draw_row(omp_y, "OMP", g["omp_segments"], g["omp_total"])
@@ -2853,7 +2979,8 @@ def _write_speedup_bar_chart(rows: List[Dict[str, Any]], svg_path: Path) -> None
     pad = 150
     height = 60 + len(valid) * (bar_height + gap)
 
-    sorted_rows = sorted(valid, key=lambda r: float(r["speedup_mean"]), reverse=True)
+    sorted_rows = sorted(valid, key=lambda r: float(
+        r["speedup_mean"]), reverse=True)
     max_speedup = max(float(r["speedup_mean"]) for r in sorted_rows)
     max_speedup = max(max_speedup, 1.2)
 
@@ -2861,7 +2988,8 @@ def _write_speedup_bar_chart(rows: List[Dict[str, Any]], svg_path: Path) -> None
         return pad + (width - pad - 80) * min(value / max_speedup, 1.0)
 
     lines: List[str] = []
-    lines.append(f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">')
+    lines.append(
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">')
     lines.append("<style>")
     lines.append(
         'text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; font-size: 12px; }'
@@ -2871,9 +2999,12 @@ def _write_speedup_bar_chart(rows: List[Dict[str, Any]], svg_path: Path) -> None
     )
     lines.append(".dim { fill: #555; }")
     lines.append("</style>")
-    lines.append(f'<text x="{pad}" y="24" font-size="16">Speedup (OMP / ARTS) per benchmark/configuration</text>')
-    lines.append(f'<text x="{pad}" y="42" class="dim mono">Bars > 1.0x → CARTS faster; < 1.0x → OpenMP wins. Multi-run mean ± std shown.</text>')
-    lines.append(f'<line x1="{pad}" y1="48" x2="{width-60}" y2="48" stroke="#ddd" stroke-width="1" />')
+    lines.append(
+        f'<text x="{pad}" y="24" font-size="16">Speedup (OMP / ARTS) per benchmark/configuration</text>')
+    lines.append(
+        f'<text x="{pad}" y="42" class="dim mono">Bars > 1.0x → CARTS faster; < 1.0x → OpenMP wins. Multi-run mean ± std shown.</text>')
+    lines.append(
+        f'<line x1="{pad}" y1="48" x2="{width-60}" y2="48" stroke="#ddd" stroke-width="1" />')
 
     for idx, r in enumerate(sorted_rows):
         y = 60 + idx * (bar_height + gap)
@@ -2881,7 +3012,8 @@ def _write_speedup_bar_chart(rows: List[Dict[str, Any]], svg_path: Path) -> None
         sp = float(r["speedup_mean"])
         sp_std = r.get("speedup_std") or 0.0
         color = "#2CA02C" if sp >= 1.0 else "#D62728"
-        lines.append(f'<text x="8" y="{y + bar_height/2 + 4:.1f}" class="mono" text-anchor="start">{_svg_escape(label)}</text>')
+        lines.append(
+            f'<text x="8" y="{y + bar_height/2 + 4:.1f}" class="mono" text-anchor="start">{_svg_escape(label)}</text>')
         bar_start = pad
         bar_end = x_pos(sp)
         lines.append(
@@ -2900,20 +3032,26 @@ def _write_speedup_bar_chart(rows: List[Dict[str, Any]], svg_path: Path) -> None
 
     # x-axis
     axis_y = height - 16
-    lines.append(f'<line x1="{pad}" y1="{axis_y}" x2="{width-80}" y2="{axis_y}" stroke="#bbb" stroke-width="1" />')
+    lines.append(
+        f'<line x1="{pad}" y1="{axis_y}" x2="{width-80}" y2="{axis_y}" stroke="#bbb" stroke-width="1" />')
     for t in [0.2, 0.5, 1.0, 2.0, max_speedup]:
         if t > max_speedup:
             continue
         x = x_pos(t)
-        lines.append(f'<line x1="{x:.2f}" y1="{axis_y-4}" x2="{x:.2f}" y2="{axis_y+4}" stroke="#bbb" stroke-width="1" />')
-        lines.append(f'<text x="{x:.2f}" y="{axis_y+16}" text-anchor="middle" class="light mono">{t:.2f}x</text>')
+        lines.append(
+            f'<line x1="{x:.2f}" y1="{axis_y-4}" x2="{x:.2f}" y2="{axis_y+4}" stroke="#bbb" stroke-width="1" />')
+        lines.append(
+            f'<text x="{x:.2f}" y="{axis_y+16}" text-anchor="middle" class="light mono">{t:.2f}x</text>')
     if max_speedup >= 1.0:
         x1 = x_pos(1.0)
-        lines.append(f'<line x1="{x1:.2f}" y1="48" x2="{x1:.2f}" y2="{axis_y}" stroke="#999" stroke-dasharray="4,3" stroke-width="1" />')
+        lines.append(
+            f'<line x1="{x1:.2f}" y1="48" x2="{x1:.2f}" y2="{axis_y}" stroke="#999" stroke-dasharray="4,3" stroke-width="1" />')
         lines.append(f'<text x="{x1:.2f}" y="60" class="dim mono">1.0x</text>')
 
     lines.append("</svg>")
     svg_path.write_text("\n".join(lines))
+
+
 def generate_markdown_report(
     results: List[BenchmarkResult],
     report_md_path: Path,
@@ -2925,12 +3063,14 @@ def generate_markdown_report(
     now = datetime.now().isoformat(timespec="seconds")
     figures_dir = report_md_path.parent / f"{report_md_path.stem}_figures"
     figures_dir.mkdir(parents=True, exist_ok=True)
-    speedup_svg_path = report_md_path.parent / f"{report_md_path.stem}_speedup_bar_chart.svg"
+    speedup_svg_path = report_md_path.parent / \
+        f"{report_md_path.stem}_speedup_bar_chart.svg"
 
     # Build per-benchmark groups (config-aware) and per-benchmark SVGs.
     groups: Dict[Tuple, List[BenchmarkResult]] = {}
     for r in results:
-        key = (r.name, r.config.arts_threads, r.config.arts_nodes, r.config.omp_threads, r.config.launcher)
+        key = (r.name, r.config.arts_threads, r.config.arts_nodes,
+               r.config.omp_threads, r.config.launcher)
         groups.setdefault(key, []).append(r)
 
     panel_groups: List[Dict[str, Any]] = []
@@ -2974,12 +3114,18 @@ def generate_markdown_report(
         bench = r0.name
 
         # Aggregate timing stats across runs (mean±std) for paper reporting.
-        arts_init_vals = [float(r.run_arts.init_timings.get("arts")) for r in runs if r.run_arts.init_timings.get("arts") is not None]
-        omp_init_vals = [float(r.run_omp.init_timings.get("omp")) for r in runs if r.run_omp.init_timings.get("omp") is not None]
-        arts_e2e_vals = [sum(r.run_arts.e2e_timings.values()) for r in runs if r.run_arts.e2e_timings]
-        omp_e2e_vals = [sum(r.run_omp.e2e_timings.values()) for r in runs if r.run_omp.e2e_timings]
-        arts_kernel_vals = [sum(r.run_arts.kernel_timings.values()) for r in runs if r.run_arts.kernel_timings]
-        omp_kernel_vals = [sum(r.run_omp.kernel_timings.values()) for r in runs if r.run_omp.kernel_timings]
+        arts_init_vals = [float(r.run_arts.init_timings.get(
+            "arts")) for r in runs if r.run_arts.init_timings.get("arts") is not None]
+        omp_init_vals = [float(r.run_omp.init_timings.get("omp"))
+                         for r in runs if r.run_omp.init_timings.get("omp") is not None]
+        arts_e2e_vals = [sum(r.run_arts.e2e_timings.values())
+                         for r in runs if r.run_arts.e2e_timings]
+        omp_e2e_vals = [sum(r.run_omp.e2e_timings.values())
+                        for r in runs if r.run_omp.e2e_timings]
+        arts_kernel_vals = [sum(r.run_arts.kernel_timings.values())
+                            for r in runs if r.run_arts.kernel_timings]
+        omp_kernel_vals = [sum(r.run_omp.kernel_timings.values())
+                           for r in runs if r.run_omp.kernel_timings]
 
         arts_init_mean, arts_init_std = _mean_std(arts_init_vals)
         omp_init_mean, omp_init_std = _mean_std(omp_init_vals)
@@ -2988,12 +3134,17 @@ def generate_markdown_report(
         arts_kernel_mean, arts_kernel_std = _mean_std(arts_kernel_vals)
         omp_kernel_mean, omp_kernel_std = _mean_std(omp_kernel_vals)
 
-        arts_other_mean = None if arts_e2e_mean is None or arts_kernel_mean is None else max(arts_e2e_mean - arts_kernel_mean, 0.0)
-        omp_other_mean = None if omp_e2e_mean is None or omp_kernel_mean is None else max(omp_e2e_mean - omp_kernel_mean, 0.0)
+        arts_other_mean = None if arts_e2e_mean is None or arts_kernel_mean is None else max(
+            arts_e2e_mean - arts_kernel_mean, 0.0)
+        omp_other_mean = None if omp_e2e_mean is None or omp_kernel_mean is None else max(
+            omp_e2e_mean - omp_kernel_mean, 0.0)
 
-        arts_total_mean = None if arts_init_mean is None or arts_e2e_mean is None else (arts_init_mean + arts_e2e_mean)
-        omp_total_mean = None if omp_init_mean is None or omp_e2e_mean is None else (omp_init_mean + omp_e2e_mean)
-        scale_max = max(float(arts_total_mean or 0.0), float(omp_total_mean or 0.0), 1e-12)
+        arts_total_mean = None if arts_init_mean is None or arts_e2e_mean is None else (
+            arts_init_mean + arts_e2e_mean)
+        omp_total_mean = None if omp_init_mean is None or omp_e2e_mean is None else (
+            omp_init_mean + omp_e2e_mean)
+        scale_max = max(float(arts_total_mean or 0.0),
+                        float(omp_total_mean or 0.0), 1e-12)
 
         # Use segment maps from the first run for labeling. (If multiple runs, segment keys should match.)
         arts_init_map = dict(r0.run_arts.init_timings)
@@ -3118,11 +3269,13 @@ def generate_markdown_report(
     lines.append("## Results (mean ± std, seconds)")
     lines.append("")
     lines.append("| Benchmark | t | n | ARTS status | OMP status | ARTS init | ARTS e2e | ARTS kernel | ARTS other | OMP init | OMP e2e | OMP kernel | OMP other | Speedup | Correct |")
-    lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---:|")
+    lines.append(
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---:|")
     for row in report_rows:
         speedup_txt = "-"
         if row["speedup_mean"] is not None:
-            speedup_txt = _fmt_mean_std_s(row["speedup_mean"], row["speedup_std"]) + f" ({row['speedup_basis']})"
+            speedup_txt = _fmt_mean_std_s(
+                row["speedup_mean"], row["speedup_std"]) + f" ({row['speedup_basis']})"
 
         correct_txt = "-"
         if row["correct_note"] == "Verification disabled":
@@ -3151,7 +3304,8 @@ def generate_markdown_report(
     lines.append("")
     lines.append("Notes:")
     lines.append("- `other = e2e - kernel` (clamped at 0).")
-    lines.append("- Figures use independent x-axis scaling per benchmark to preserve within-benchmark structure.")
+    lines.append(
+        "- Figures use independent x-axis scaling per benchmark to preserve within-benchmark structure.")
     lines.append("")
     lines.append("## Missing Signals")
     lines.append("")
@@ -3180,7 +3334,8 @@ def generate_markdown_report(
         if not cause:
             cause.append("timing macros not enabled or benchmark not rebuilt")
 
-        lines.append(f"| {row['benchmark']} | {', '.join(missing)} | {', '.join(cause)} |")
+        lines.append(
+            f"| {row['benchmark']} | {', '.join(missing)} | {', '.join(cause)} |")
     if not any_missing:
         lines.append("| (none) | - | - |")
     lines.append("")
@@ -3196,15 +3351,20 @@ def generate_markdown_report(
         if svg_path is not None:
             lines.append(f"![{bench}]({figures_dir.name}/{svg_path.name})")
             lines.append("")
-        lines.append(f"- Config: `threads={row['threads']}`, `nodes={row['nodes']}`, `omp_threads={row['omp_threads']}`, `launcher={row['launcher']}`, `runs={row['run_count']}`")
+        lines.append(
+            f"- Config: `threads={row['threads']}`, `nodes={row['nodes']}`, `omp_threads={row['omp_threads']}`, `launcher={row['launcher']}`, `runs={row['run_count']}`")
         lines.append(f"- Size params: `{row['size_params'] or 'N/A'}`")
-        lines.append(f"- Status: `ARTS={row['arts_status']}`, `OMP={row['omp_status']}`")
-        lines.append(f"- ARTS init breakdown: {_kv_lines(row['arts_init_map'])}")
+        lines.append(
+            f"- Status: `ARTS={row['arts_status']}`, `OMP={row['omp_status']}`")
+        lines.append(
+            f"- ARTS init breakdown: {_kv_lines(row['arts_init_map'])}")
         lines.append(f"- ARTS e2e breakdown: {_kv_lines(row['arts_e2e_map'])}")
-        lines.append(f"- ARTS kernel breakdown: {_kv_lines(row['arts_kernel_map'])}")
+        lines.append(
+            f"- ARTS kernel breakdown: {_kv_lines(row['arts_kernel_map'])}")
         lines.append(f"- OMP init breakdown: {_kv_lines(row['omp_init_map'])}")
         lines.append(f"- OMP e2e breakdown: {_kv_lines(row['omp_e2e_map'])}")
-        lines.append(f"- OMP kernel breakdown: {_kv_lines(row['omp_kernel_map'])}")
+        lines.append(
+            f"- OMP kernel breakdown: {_kv_lines(row['omp_kernel_map'])}")
         lines.append("")
 
     report_md_path.write_text("\n".join(lines))
@@ -3221,8 +3381,10 @@ def generate_markdown_report_from_json(
     output_md.parent.mkdir(parents=True, exist_ok=True)
     figures_dir = output_md.parent / f"{output_md.stem}_figures"
     figures_dir.mkdir(parents=True, exist_ok=True)
-    chart_svg_path = output_md.parent / f"{output_md.stem}_init_e2e_small_multiples.svg"
-    out_speedup_svg = output_md.parent / f"{output_md.stem}_speedup_bar_chart.svg"
+    chart_svg_path = output_md.parent / \
+        f"{output_md.stem}_init_e2e_small_multiples.svg"
+    out_speedup_svg = output_md.parent / \
+        f"{output_md.stem}_speedup_bar_chart.svg"
 
     results = data.get("results", [])
     if not results:
@@ -3299,14 +3461,18 @@ def generate_markdown_report_from_json(
             if r.get("run_omp", {}).get("init_timings", {}).get("omp") is not None
         ]
 
-        arts_e2e_vals = [sum_map(r.get("run_arts", {}).get("e2e_timings")) for r in runs]
+        arts_e2e_vals = [
+            sum_map(r.get("run_arts", {}).get("e2e_timings")) for r in runs]
         arts_e2e_vals = [v for v in arts_e2e_vals if v is not None]
-        omp_e2e_vals = [sum_map(r.get("run_omp", {}).get("e2e_timings")) for r in runs]
+        omp_e2e_vals = [
+            sum_map(r.get("run_omp", {}).get("e2e_timings")) for r in runs]
         omp_e2e_vals = [v for v in omp_e2e_vals if v is not None]
 
-        arts_kernel_vals = [sum_map(r.get("run_arts", {}).get("kernel_timings")) for r in runs]
+        arts_kernel_vals = [
+            sum_map(r.get("run_arts", {}).get("kernel_timings")) for r in runs]
         arts_kernel_vals = [v for v in arts_kernel_vals if v is not None]
-        omp_kernel_vals = [sum_map(r.get("run_omp", {}).get("kernel_timings")) for r in runs]
+        omp_kernel_vals = [
+            sum_map(r.get("run_omp", {}).get("kernel_timings")) for r in runs]
         omp_kernel_vals = [v for v in omp_kernel_vals if v is not None]
 
         arts_init_mean, arts_init_std = mean_std(arts_init_vals)
@@ -3316,8 +3482,10 @@ def generate_markdown_report_from_json(
         arts_kernel_mean, arts_kernel_std = mean_std(arts_kernel_vals)
         omp_kernel_mean, omp_kernel_std = mean_std(omp_kernel_vals)
 
-        arts_other = None if arts_e2e_mean is None or arts_kernel_mean is None else max(arts_e2e_mean - arts_kernel_mean, 0.0)
-        omp_other = None if omp_e2e_mean is None or omp_kernel_mean is None else max(omp_e2e_mean - omp_kernel_mean, 0.0)
+        arts_other = None if arts_e2e_mean is None or arts_kernel_mean is None else max(
+            arts_e2e_mean - arts_kernel_mean, 0.0)
+        omp_other = None if omp_e2e_mean is None or omp_kernel_mean is None else max(
+            omp_e2e_mean - omp_kernel_mean, 0.0)
 
         arts_total = float((arts_init_mean or 0.0) + (arts_e2e_mean or 0.0))
         omp_total = float((omp_init_mean or 0.0) + (omp_e2e_mean or 0.0))
@@ -3344,7 +3512,8 @@ def generate_markdown_report_from_json(
             "omp_total": sum(v for _, v in omp_segments),
         })
 
-        fig_svg = figures_dir / f"{_sanitize_filename(name)}_{arts_t}t_{arts_n}n.svg"
+        fig_svg = figures_dir / \
+            f"{_sanitize_filename(name)}_{arts_t}t_{arts_n}n.svg"
         _write_per_benchmark_timeline_svg(
             name,
             dict(run_arts0.get("init_timings") or {}),
@@ -3413,7 +3582,8 @@ def generate_markdown_report_from_json(
     lines.append("## Results (mean ± std, seconds)")
     lines.append("")
     lines.append("| Benchmark | t | n | ARTS status | OMP status | ARTS init | ARTS e2e | ARTS kernel | ARTS other | OMP init | OMP e2e | OMP kernel | OMP other | Speedup | Correct |")
-    lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---:|")
+    lines.append(
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---:|")
     for r in report_rows:
         speed_txt = "-"
         if r.get("speedup_mean") is not None:
@@ -3441,17 +3611,21 @@ def generate_markdown_report_from_json(
         lines.append("")
         lines.append(f"![{r['name']}]({figures_dir.name}/{r['figure']})")
         lines.append("")
-        lines.append(f"- Config: `threads={r['arts_threads']}`, `nodes={r['arts_nodes']}`, `omp_threads={r['omp_threads']}`, `launcher={r['launcher']}`")
+        lines.append(
+            f"- Config: `threads={r['arts_threads']}`, `nodes={r['arts_nodes']}`, `omp_threads={r['omp_threads']}`, `launcher={r['launcher']}`")
         lines.append(f"- ARTS init breakdown: {kv_lines(r['arts_init_map'])}")
         lines.append(f"- ARTS e2e breakdown: {kv_lines(r['arts_e2e_map'])}")
-        lines.append(f"- ARTS kernel breakdown: {kv_lines(r['arts_kernel_map'])}")
+        lines.append(
+            f"- ARTS kernel breakdown: {kv_lines(r['arts_kernel_map'])}")
         lines.append(f"- OMP init breakdown: {kv_lines(r['omp_init_map'])}")
         lines.append(f"- OMP e2e breakdown: {kv_lines(r['omp_e2e_map'])}")
-        lines.append(f"- OMP kernel breakdown: {kv_lines(r['omp_kernel_map'])}")
+        lines.append(
+            f"- OMP kernel breakdown: {kv_lines(r['omp_kernel_map'])}")
         lines.append("")
 
     output_md.write_text("\n".join(lines))
     return chart_svg_path, out_speedup_svg, figures_dir
+
 
 def create_live_table(
     benchmarks: List[str],
@@ -3492,7 +3666,8 @@ def create_live_table(
                 if arts_e2e is not None:
                     run_arts = f"{status_symbol(r.run_arts.status)} {arts_e2e_str}"
                 else:
-                    arts_kernel, arts_kernel_str = format_kernel_time(r.run_arts)
+                    arts_kernel, arts_kernel_str = format_kernel_time(
+                        r.run_arts)
                     if arts_kernel is not None:
                         run_arts = f"{status_symbol(r.run_arts.status)} {arts_kernel_str}*"
                     else:
@@ -3596,14 +3771,16 @@ def create_live_table(
                 if current_partial and "run_arts" in current_partial:
                     run_arts_result = current_partial["run_arts"]
                     arts_e2e, arts_e2e_str = format_e2e_time(run_arts_result)
-                    arts_init, arts_init_str = format_init_time(run_arts_result)
+                    arts_init, arts_init_str = format_init_time(
+                        run_arts_result)
                     if run_arts_result.status == Status.PASS:
                         if arts_e2e is not None:
                             run_arts = f"{status_symbol(run_arts_result.status)} {arts_e2e_str}"
                             if arts_init is not None:
                                 run_arts += f" (init {arts_init_str})"
                         else:
-                            arts_kernel, arts_kernel_str = format_kernel_time(run_arts_result)
+                            arts_kernel, arts_kernel_str = format_kernel_time(
+                                run_arts_result)
                             if arts_kernel is not None:
                                 run_arts = f"{status_symbol(run_arts_result.status)} {arts_kernel_str}*"
                             else:
@@ -3681,7 +3858,8 @@ def create_live_display(
     current_partial: Optional[Dict[str, Any]] = None,
 ) -> Group:
     """Create the complete live display (table + summary)."""
-    table = create_live_table(benchmarks, results, in_progress, current_phase, current_partial)
+    table = create_live_table(
+        benchmarks, results, in_progress, current_phase, current_partial)
     summary = create_live_summary(results, len(benchmarks), elapsed)
     return Group(table, summary)
 
@@ -4355,21 +4533,24 @@ def run(
                 arts_threads = int(cfg.get("threads", "1"))
                 arts_nodes = int(cfg.get("nodeCount", "1"))
                 arts_launcher = cfg.get("launcher", "ssh")
-                arts_nodes_list = [n.strip() for n in cfg.get("nodes", "localhost").split(",") if n.strip()]
+                arts_nodes_list = [n.strip() for n in cfg.get(
+                    "nodes", "localhost").split(",") if n.strip()]
 
                 # Build config display items efficiently
                 arts_config_items = [f"arts-threads={arts_threads}",
-                                    f"arts-nodes={arts_nodes}",
-                                    f"arts-launcher={arts_launcher}"]
+                                     f"arts-nodes={arts_nodes}",
+                                     f"arts-launcher={arts_launcher}"]
 
                 # Only show node list if it's not just localhost
                 if arts_nodes_list != ["localhost"]:
                     node_display = ','.join(arts_nodes_list[:3])
                     if len(arts_nodes_list) > 3:
                         node_display += "..."
-                    arts_config_items.append(f"arts-node-list=[{node_display}]")
+                    arts_config_items.append(
+                        f"arts-node-list=[{node_display}]")
 
-                console.print(f"ARTS Config ({config_source}): {', '.join(arts_config_items)}")
+                console.print(
+                    f"ARTS Config ({config_source}): {', '.join(arts_config_items)}")
 
         console.print(f"Benchmarks: {len(bench_list)}\n")
 
@@ -4475,8 +4656,10 @@ def run(
 
         out_dir.mkdir(parents=True, exist_ok=True)
         report_md = out_dir / f"benchmark_report_{run_timestamp}.md"
-        report_svg = out_dir / f"benchmark_report_{run_timestamp}_init_e2e_small_multiples.svg"
-        report_chart, report_speedup = generate_markdown_report(results, report_md, report_svg, size=size)
+        report_svg = out_dir / \
+            f"benchmark_report_{run_timestamp}_init_e2e_small_multiples.svg"
+        report_chart, report_speedup = generate_markdown_report(
+            results, report_md, report_svg, size=size)
         if not quiet:
             console.print()
             console.print(f"[green]Report:[/] {report_md}")
@@ -4613,7 +4796,8 @@ def report(
         # carts-benchmarks/results).
         candidates: List[Path] = []
         candidates.extend(Path(".").glob("benchmark_results_*.json"))
-        candidates.extend((get_benchmarks_dir() / "results").glob("benchmark_results_*.json"))
+        candidates.extend(
+            (get_benchmarks_dir() / "results").glob("benchmark_results_*.json"))
         candidates = [p for p in candidates if p.exists()]
         if candidates:
             candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
@@ -4667,8 +4851,10 @@ def report(
             timing = r.get("timing", {})
             chart.add_row(
                 r.get("name", ""),
-                _render_init_e2e_bar(timing.get("arts_init_sec"), timing.get("arts_e2e_sec"), max_total),
-                _render_init_e2e_bar(timing.get("omp_init_sec"), timing.get("omp_e2e_sec"), max_total),
+                _render_init_e2e_bar(timing.get(
+                    "arts_init_sec"), timing.get("arts_e2e_sec"), max_total),
+                _render_init_e2e_bar(timing.get(
+                    "omp_init_sec"), timing.get("omp_e2e_sec"), max_total),
             )
         chart.caption = "[dim]Bar colors: init=red, e2e=green[/]"
         console.print(chart)
@@ -4706,10 +4892,12 @@ def report(
 
             arts_init, arts_init_n = _sum_and_count(arts.get("init_timings"))
             arts_e2e, arts_e2e_n = _sum_and_count(arts.get("e2e_timings"))
-            arts_kernel, arts_kernel_n = _sum_and_count(arts.get("kernel_timings"))
+            arts_kernel, arts_kernel_n = _sum_and_count(
+                arts.get("kernel_timings"))
             omp_init, omp_init_n = _sum_and_count(omp.get("init_timings"))
             omp_e2e, omp_e2e_n = _sum_and_count(omp.get("e2e_timings"))
-            omp_kernel, omp_kernel_n = _sum_and_count(omp.get("kernel_timings"))
+            omp_kernel, omp_kernel_n = _sum_and_count(
+                omp.get("kernel_timings"))
 
             def _fmt(v: Optional[float], n: int) -> str:
                 if v is None:
@@ -4795,6 +4983,7 @@ def report(
     console.print(f"[green]Chart:[/]  {report_chart}")
     console.print(f"[green]Speedup:[/] {report_speedup}")
     return
+
 
 @app.command()
 def analyze(

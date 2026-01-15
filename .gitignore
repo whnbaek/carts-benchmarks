@@ -70,6 +70,7 @@ DbGraph_*.dot
 *.json
 logs/
 build/
+.artsPrintLock
 
 # Generated ARTS configs (for multi-node runs)
 .generated_configs/

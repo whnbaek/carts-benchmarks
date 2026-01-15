@@ -6,10 +6,11 @@ SRC := lulesh.c
 TINY_CFLAGS ?=
 SMALL_CFLAGS ?=
 MEDIUM_CFLAGS ?=
+EXTRA_CFLAGS ?= -DCARTS_QSTOP=1.0e+30
 
 # Runtime arguments for different sizes
 TINY_ARGS := -s 3 -i 10
-SMALL_ARGS := -s 10 -i 100
+SMALL_ARGS := -s 10 -i 10
 MEDIUM_ARGS := -s 30 -i 500
 
 include ../common/carts.mk

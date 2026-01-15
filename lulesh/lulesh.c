@@ -45,6 +45,7 @@
 #if _OPENMP
 #include <omp.h>
 #endif
+#include "arts/Utils/Benchmarks/CartsBenchmarks.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -58,8 +59,8 @@
 
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
 
-    // Precision specification
-    typedef float real4;
+// Precision specification
+typedef float real4;
 typedef double real8;
 typedef long double real10;
 
@@ -68,6 +69,133 @@ typedef real8 Real_t;
 typedef int Int_t;
 
 enum { VolumeError = -1, QStopError = -2 };
+
+static int lulesh_debug_enabled(void) {
+  static int enabled = -1;
+  if (enabled < 0) {
+    const char *env = getenv("CARTS_LULESH_DEBUG");
+    enabled = (env && env[0] != '\0' && strcmp(env, "0") != 0) ? 1 : 0;
+  }
+  return enabled;
+}
+
+static Int_t lulesh_debug_cycle = -1;
+
+static inline void DebugPrintInit(const Real_t *e, const Real_t *p,
+                                  const Real_t *q, const Real_t *v,
+                                  const Real_t *volo, const Real_t *nodalMass,
+                                  const Real_t *x, const Real_t *y,
+                                  const Real_t *z, Index_t **nodelist) {
+  if (!lulesh_debug_enabled())
+    return;
+  printf("[DEBUG][init] e0=%.6e p0=%.6e q0=%.6e v0=%.6e volo0=%.6e "
+         "nodalMass0=%.6e x0=%.6e y0=%.6e z0=%.6e\n",
+         e[0], p[0], q[0], v[0], volo[0], nodalMass[0], x[0], y[0], z[0]);
+  printf("[DEBUG][init] nodelist0={%d,%d,%d,%d,%d,%d,%d,%d}\n", nodelist[0][0],
+         nodelist[0][1], nodelist[0][2], nodelist[0][3], nodelist[0][4],
+         nodelist[0][5], nodelist[0][6], nodelist[0][7]);
+}
+
+static inline void DebugPrintNodal(const char *tag, const Real_t *x,
+                                   const Real_t *y, const Real_t *z,
+                                   const Real_t *xd, const Real_t *yd,
+                                   const Real_t *zd, const Real_t *fx,
+                                   const Real_t *fy, const Real_t *fz,
+                                   Index_t numNode) {
+  if (!lulesh_debug_enabled())
+    return;
+  Index_t limit = numNode < 8 ? numNode : 8;
+  Real_t sum_x = 0.0, sum_y = 0.0, sum_z = 0.0;
+  Real_t sum_xd = 0.0, sum_yd = 0.0, sum_zd = 0.0;
+  Real_t sum_fx = 0.0, sum_fy = 0.0, sum_fz = 0.0;
+  for (Index_t i = 0; i < limit; ++i) {
+    sum_x += x[i];
+    sum_y += y[i];
+    sum_z += z[i];
+    sum_xd += xd[i];
+    sum_yd += yd[i];
+    sum_zd += zd[i];
+    sum_fx += fx[i];
+    sum_fy += fy[i];
+    sum_fz += fz[i];
+  }
+  printf("[DEBUG][%d][%s] x0=%.6e y0=%.6e z0=%.6e xd0=%.6e yd0=%.6e zd0=%.6e "
+         "fx0=%.6e fy0=%.6e fz0=%.6e sumx8=%.6e sumy8=%.6e sumz8=%.6e "
+         "sumxd8=%.6e sumyd8=%.6e sumzd8=%.6e sumfx8=%.6e sumfy8=%.6e "
+         "sumfz8=%.6e\n",
+         lulesh_debug_cycle, tag, x[0], y[0], z[0], xd[0], yd[0], zd[0], fx[0],
+         fy[0], fz[0], sum_x, sum_y, sum_z, sum_xd, sum_yd, sum_zd, sum_fx,
+         sum_fy, sum_fz);
+}
+
+static inline void DebugPrintElems(const char *tag, const Real_t *e,
+                                   const Real_t *p, const Real_t *q,
+                                   const Real_t *v, const Real_t *delv,
+                                   const Real_t *arealg, const Real_t *vdov,
+                                   const Real_t *ss, Index_t numElem) {
+  if (!lulesh_debug_enabled())
+    return;
+  Index_t limit = numElem < 8 ? numElem : 8;
+  Real_t sum_v = 0.0, sum_delv = 0.0, sum_arealg = 0.0;
+  Real_t sum_vdov = 0.0, sum_ss = 0.0;
+  for (Index_t i = 0; i < limit; ++i) {
+    sum_v += v[i];
+    sum_delv += delv[i];
+    sum_arealg += arealg[i];
+    sum_vdov += vdov[i];
+    sum_ss += ss[i];
+  }
+  printf("[DEBUG][%d][%s] e0=%.6e p0=%.6e q0=%.6e v0=%.6e delv0=%.6e "
+         "arealg0=%.6e vdov0=%.6e ss0=%.6e sumv8=%.6e sumdelv8=%.6e "
+         "sumarealg8=%.6e sumvdov8=%.6e sumss8=%.6e\n",
+         lulesh_debug_cycle, tag, e[0], p[0], q[0], v[0], delv[0], arealg[0],
+         vdov[0], ss[0], sum_v, sum_delv, sum_arealg, sum_vdov, sum_ss);
+}
+
+static inline void DebugPrintConstraints(const char *tag, Real_t dtcourant,
+                                         Real_t dthydro) {
+  if (!lulesh_debug_enabled())
+    return;
+  printf("[DEBUG][%d][%s] dtcourant=%.6e dthydro=%.6e\n",
+         lulesh_debug_cycle, tag, dtcourant, dthydro);
+}
+
+static inline void DebugPrintElem0Nodal(const char *tag, Index_t **nodelist,
+                                        const Real_t *x, const Real_t *y,
+                                        const Real_t *z, const Real_t *xd,
+                                        const Real_t *yd, const Real_t *zd,
+                                        const Real_t *xdd, const Real_t *ydd,
+                                        const Real_t *zdd, const Real_t *fx,
+                                        const Real_t *fy, const Real_t *fz) {
+  if (!lulesh_debug_enabled())
+    return;
+  Index_t *nodes = nodelist[0];
+  Real_t sum_x = 0.0, sum_y = 0.0, sum_z = 0.0;
+  Real_t sum_xd = 0.0, sum_yd = 0.0, sum_zd = 0.0;
+  Real_t sum_xdd = 0.0, sum_ydd = 0.0, sum_zdd = 0.0;
+  Real_t sum_fx = 0.0, sum_fy = 0.0, sum_fz = 0.0;
+  for (Index_t i = 0; i < 8; ++i) {
+    Index_t n = nodes[i];
+    sum_x += x[n];
+    sum_y += y[n];
+    sum_z += z[n];
+    sum_xd += xd[n];
+    sum_yd += yd[n];
+    sum_zd += zd[n];
+    sum_xdd += xdd[n];
+    sum_ydd += ydd[n];
+    sum_zdd += zdd[n];
+    sum_fx += fx[n];
+    sum_fy += fy[n];
+    sum_fz += fz[n];
+  }
+  printf("[DEBUG][%d][%s] sumx_e0=%.6e sumy_e0=%.6e sumz_e0=%.6e "
+         "sumxd_e0=%.6e sumyd_e0=%.6e sumzd_e0=%.6e "
+         "sumxdd_e0=%.6e sumydd_e0=%.6e sumzdd_e0=%.6e "
+         "sumfx_e0=%.6e sumfy_e0=%.6e sumfz_e0=%.6e\n",
+         lulesh_debug_cycle, tag, sum_x, sum_y, sum_z, sum_xd, sum_yd, sum_zd,
+         sum_xdd, sum_ydd, sum_zdd, sum_fx, sum_fy, sum_fz);
+}
 
 // Math functions - use appropriate types
 #define SQRT(x) sqrt(x)
@@ -119,12 +247,15 @@ static const Real_t c_q_cut = 1.0e-7;
 static const Real_t c_v_cut = 1.0e-10;
 static const Real_t c_u_cut = 1.0e-7;
 static const Real_t c_hgcoef = 3.0;
-static const Real_t c_ss4o3 = 4.0 / 3.0;
-static const Real_t c_qstop = 1.0e+12;
+static const Real_t c_ss4o3 = 1.3333333333333333;
+#ifndef CARTS_QSTOP
+#define CARTS_QSTOP 1.0e+12
+#endif
+static const Real_t c_qstop = CARTS_QSTOP;
 static const Real_t c_monoq_max_slope = 1.0;
 static const Real_t c_monoq_limiter_mult = 2.0;
 static const Real_t c_qlc_monoq = 0.5;
-static const Real_t c_qqc_monoq = 2.0 / 3.0;
+static const Real_t c_qqc_monoq = 0.6666666666666666;
 static const Real_t c_qqc = 2.0;
 static const Real_t c_eosvmax = 1.0e+9;
 static const Real_t c_eosvmin = 1.0e-9;
@@ -151,7 +282,8 @@ typedef struct cmdLineOpts {
 // Function prototypes
 //**************************************************
 
-static inline Real_t CalcElemVolume(const Real_t x[8], const Real_t y[8], const Real_t z[8]);
+static inline Real_t CalcElemVolume(const Real_t x[8], const Real_t y[8],
+                                    const Real_t z[8]);
 
 //**************************************************
 // Helper allocation functions
@@ -169,6 +301,39 @@ static inline Int_t *AllocateInt(size_t size) {
   return (Int_t *)malloc(sizeof(Int_t) * size);
 }
 
+//**************************************************
+// 2D Array allocation helpers (CARTS-compatible)
+//**************************************************
+
+static inline Index_t **AllocateIndex2D(size_t rows, size_t cols) {
+  Index_t **arr = (Index_t **)malloc(rows * sizeof(Index_t *));
+  for (size_t i = 0; i < rows; i++) {
+    arr[i] = (Index_t *)malloc(cols * sizeof(Index_t));
+  }
+  return arr;
+}
+
+static inline void FreeIndex2D(Index_t **arr, size_t rows) {
+  for (size_t i = 0; i < rows; i++) {
+    free(arr[i]);
+  }
+  free(arr);
+}
+
+static inline Real_t **AllocateReal2D(size_t rows, size_t cols) {
+  Real_t **arr = (Real_t **)malloc(rows * sizeof(Real_t *));
+  for (size_t i = 0; i < rows; i++) {
+    arr[i] = (Real_t *)malloc(cols * sizeof(Real_t));
+  }
+  return arr;
+}
+
+static inline void FreeReal2D(Real_t **arr, size_t rows) {
+  for (size_t i = 0; i < rows; i++) {
+    free(arr[i]);
+  }
+  free(arr);
+}
 
 //**************************************************
 // Time increment
@@ -211,8 +376,7 @@ static inline void TimeIncrement(Real_t *deltatime, Real_t *time, Int_t *cycle,
     *deltatime = newdt;
   }
 
-  if ((targetdt > (*deltatime)) &&
-      (targetdt < (4.0 * (*deltatime) / 3.0))) {
+  if ((targetdt > (*deltatime)) && (targetdt < (4.0 * (*deltatime) / 3.0))) {
     targetdt = 2.0 * (*deltatime) / 3.0;
   }
 
@@ -229,8 +393,7 @@ static inline void TimeIncrement(Real_t *deltatime, Real_t *time, Int_t *cycle,
 //**************************************************
 
 static inline void CollectNodesToElemNodes(const Real_t *x, const Real_t *y,
-                                           const Real_t *z,
-                                           const Index_t *elemToNode,
+                                           const Real_t *z, Index_t *elemToNode,
                                            Real_t elemX[8], Real_t elemY[8],
                                            Real_t elemZ[8]) {
   Index_t nd0i = elemToNode[0];
@@ -277,7 +440,7 @@ static inline void CollectNodesToElemNodes(const Real_t *x, const Real_t *y,
 static inline void InitStressTermsForElems(const Real_t *p, const Real_t *q,
                                            Real_t *sigxx, Real_t *sigyy,
                                            Real_t *sigzz, Index_t numElem) {
-  #pragma omp parallel for firstprivate(numElem)
+#pragma omp parallel for firstprivate(numElem)
   for (Index_t i = 0; i < numElem; ++i) {
     sigxx[i] = sigyy[i] = sigzz[i] = -p[i] - q[i];
   }
@@ -461,36 +624,33 @@ SumElemStressesToNodeForces(const Real_t B[][8], const Real_t stress_xx,
 //**************************************************
 
 static inline void IntegrateStressForElems(
-    const Real_t *x, const Real_t *y, const Real_t *z, const Index_t *nodelist,
-    const Index_t *nodeElemStart, const Index_t *nodeElemCornerList,
-    Real_t *fx, Real_t *fy, Real_t *fz, Real_t *sigxx, Real_t *sigyy,
-    Real_t *sigzz, Real_t *determ, Index_t numElem, Index_t numNode) {
+    const Real_t *x, const Real_t *y, const Real_t *z, Index_t **nodelist,
+    const Index_t *nodeElemStart, const Index_t *nodeElemCornerList, Real_t *fx,
+    Real_t *fy, Real_t *fz, Real_t *sigxx, Real_t *sigyy, Real_t *sigzz,
+    Real_t *determ, Index_t numElem, Index_t numNode) {
   // Simplified for CARTS: always use multi-threaded path
-  Index_t numElem8 = numElem * 8;
-  Real_t *fx_elem = AllocateReal(numElem8);
-  Real_t *fy_elem = AllocateReal(numElem8);
-  Real_t *fz_elem = AllocateReal(numElem8);
+  Real_t **fx_elem = AllocateReal2D(numElem, 8);
+  Real_t **fy_elem = AllocateReal2D(numElem, 8);
+  Real_t **fz_elem = AllocateReal2D(numElem, 8);
 
-  #pragma omp parallel for firstprivate(numElem)
+#pragma omp parallel for firstprivate(numElem)
   for (Index_t k = 0; k < numElem; ++k) {
-    const Index_t *const elemToNode = &nodelist[8 * k];
     Real_t B[3][8];
     Real_t x_local[8];
     Real_t y_local[8];
     Real_t z_local[8];
 
-    CollectNodesToElemNodes(x, y, z, elemToNode, x_local, y_local, z_local);
+    CollectNodesToElemNodes(x, y, z, nodelist[k], x_local, y_local, z_local);
 
     CalcElemShapeFunctionDerivatives(x_local, y_local, z_local, B, &determ[k]);
 
     CalcElemNodeNormals(B[0], B[1], B[2], x_local, y_local, z_local);
 
-    SumElemStressesToNodeForces(B, sigxx[k], sigyy[k], sigzz[k],
-                                &fx_elem[k * 8], &fy_elem[k * 8],
-                                &fz_elem[k * 8]);
+    SumElemStressesToNodeForces(B, sigxx[k], sigyy[k], sigzz[k], fx_elem[k],
+                                fy_elem[k], fz_elem[k]);
   }
 
-  #pragma omp parallel for firstprivate(numNode)
+#pragma omp parallel for firstprivate(numNode)
   for (Index_t gnode = 0; gnode < numNode; ++gnode) {
     Index_t count = nodeElemStart[gnode + 1] - nodeElemStart[gnode];
     Index_t *cornerList = (Index_t *)&nodeElemCornerList[nodeElemStart[gnode]];
@@ -499,17 +659,17 @@ static inline void IntegrateStressForElems(
     Real_t fz_tmp = 0.0;
     for (Index_t i = 0; i < count; ++i) {
       Index_t elem = cornerList[i];
-      fx_tmp += fx_elem[elem];
-      fy_tmp += fy_elem[elem];
-      fz_tmp += fz_elem[elem];
+      fx_tmp += fx_elem[elem / 8][elem % 8];
+      fy_tmp += fy_elem[elem / 8][elem % 8];
+      fz_tmp += fz_elem[elem / 8][elem % 8];
     }
     fx[gnode] = fx_tmp;
     fy[gnode] = fy_tmp;
     fz[gnode] = fz_tmp;
   }
-  free(fz_elem);
-  free(fy_elem);
-  free(fx_elem);
+  FreeReal2D(fz_elem, numElem);
+  FreeReal2D(fy_elem, numElem);
+  FreeReal2D(fx_elem, numElem);
 }
 
 //**************************************************
@@ -625,18 +785,17 @@ static inline void CalcElemFBHourglassForce(Real_t *xd, Real_t *yd, Real_t *zd,
 //**************************************************
 
 static inline void CalcFBHourglassForceForElems(
-    const Real_t *xd, const Real_t *yd, const Real_t *zd,
-    const Index_t *nodelist, const Real_t *ss, const Real_t *elemMass,
-    const Index_t *nodeElemStart, const Index_t *nodeElemCornerList,
-    Real_t *fx, Real_t *fy, Real_t *fz, Real_t *determ, Real_t *x8n,
-    Real_t *y8n, Real_t *z8n, Real_t *dvdx, Real_t *dvdy, Real_t *dvdz,
-    Real_t hourg, Index_t numElem, Index_t numNode) {
+    const Real_t *xd, const Real_t *yd, const Real_t *zd, Index_t **nodelist,
+    const Real_t *ss, const Real_t *elemMass, const Index_t *nodeElemStart,
+    const Index_t *nodeElemCornerList, Real_t *fx, Real_t *fy, Real_t *fz,
+    Real_t *determ, Real_t *x8n, Real_t *y8n, Real_t *z8n, Real_t *dvdx,
+    Real_t *dvdy, Real_t *dvdz, Real_t hourg, Index_t numElem,
+    Index_t numNode) {
 
   // Simplified for CARTS: always use multi-threaded path
-  Index_t numElem8 = numElem * 8;
-  Real_t *fx_elem = AllocateReal(numElem8);
-  Real_t *fy_elem = AllocateReal(numElem8);
-  Real_t *fz_elem = AllocateReal(numElem8);
+  Real_t **fx_elem = AllocateReal2D(numElem, 8);
+  Real_t **fy_elem = AllocateReal2D(numElem, 8);
+  Real_t **fz_elem = AllocateReal2D(numElem, 8);
 
   Real_t gamma[4][8];
   gamma[0][0] = 1.;
@@ -673,13 +832,11 @@ static inline void CalcFBHourglassForceForElems(
   gamma[3][7] = -1.;
 
   for (Index_t i2 = 0; i2 < numElem; ++i2) {
-    Real_t *fx_local, *fy_local, *fz_local;
     Real_t hgfx[8], hgfy[8], hgfz[8];
     Real_t coefficient;
     Real_t hourgam[8][4];
     Real_t xd1[8], yd1[8], zd1[8];
 
-    const Index_t *elemToNode = &nodelist[8 * i2];
     Index_t i3 = 8 * i2;
     Real_t volinv = 1.0 / determ[i2];
 
@@ -739,14 +896,14 @@ static inline void CalcFBHourglassForceForElems(
     Real_t mass1 = elemMass[i2];
     Real_t volume13 = CBRT(determ[i2]);
 
-    Index_t n0si2 = elemToNode[0];
-    Index_t n1si2 = elemToNode[1];
-    Index_t n2si2 = elemToNode[2];
-    Index_t n3si2 = elemToNode[3];
-    Index_t n4si2 = elemToNode[4];
-    Index_t n5si2 = elemToNode[5];
-    Index_t n6si2 = elemToNode[6];
-    Index_t n7si2 = elemToNode[7];
+    Index_t n0si2 = nodelist[i2][0];
+    Index_t n1si2 = nodelist[i2][1];
+    Index_t n2si2 = nodelist[i2][2];
+    Index_t n3si2 = nodelist[i2][3];
+    Index_t n4si2 = nodelist[i2][4];
+    Index_t n5si2 = nodelist[i2][5];
+    Index_t n6si2 = nodelist[i2][6];
+    Index_t n7si2 = nodelist[i2][7];
 
     xd1[0] = xd[n0si2];
     xd1[1] = xd[n1si2];
@@ -780,18 +937,15 @@ static inline void CalcFBHourglassForceForElems(
     CalcElemFBHourglassForce(xd1, yd1, zd1, hourgam, coefficient, hgfx, hgfy,
                              hgfz);
 
-    fx_local = &fx_elem[i3];
     for (int i = 0; i < 8; i++)
-      fx_local[i] = hgfx[i];
-    fy_local = &fy_elem[i3];
+      fx_elem[i2][i] = hgfx[i];
     for (int i = 0; i < 8; i++)
-      fy_local[i] = hgfy[i];
-    fz_local = &fz_elem[i3];
+      fy_elem[i2][i] = hgfy[i];
     for (int i = 0; i < 8; i++)
-      fz_local[i] = hgfz[i];
+      fz_elem[i2][i] = hgfz[i];
   }
 
-  #pragma omp parallel for firstprivate(numNode)
+#pragma omp parallel for firstprivate(numNode)
   for (Index_t gnode = 0; gnode < numNode; ++gnode) {
     Index_t count = nodeElemStart[gnode + 1] - nodeElemStart[gnode];
     Index_t *cornerList = (Index_t *)&nodeElemCornerList[nodeElemStart[gnode]];
@@ -800,17 +954,17 @@ static inline void CalcFBHourglassForceForElems(
     Real_t fz_tmp = 0.0;
     for (Index_t i = 0; i < count; ++i) {
       Index_t elem = cornerList[i];
-      fx_tmp += fx_elem[elem];
-      fy_tmp += fy_elem[elem];
-      fz_tmp += fz_elem[elem];
+      fx_tmp += fx_elem[elem / 8][elem % 8];
+      fy_tmp += fy_elem[elem / 8][elem % 8];
+      fz_tmp += fz_elem[elem / 8][elem % 8];
     }
     fx[gnode] += fx_tmp;
     fy[gnode] += fy_tmp;
     fz[gnode] += fz_tmp;
   }
-  free(fz_elem);
-  free(fy_elem);
-  free(fx_elem);
+  FreeReal2D(fz_elem, numElem);
+  FreeReal2D(fy_elem, numElem);
+  FreeReal2D(fx_elem, numElem);
 }
 
 //**************************************************
@@ -819,11 +973,11 @@ static inline void CalcFBHourglassForceForElems(
 
 static inline void CalcHourglassControlForElems(
     const Real_t *x, const Real_t *y, const Real_t *z, const Real_t *xd,
-    const Real_t *yd, const Real_t *zd, const Index_t *nodelist,
-    const Real_t *volo, const Real_t *v, const Real_t *ss,
-    const Real_t *elemMass, const Index_t *nodeElemStart,
-    const Index_t *nodeElemCornerList, Real_t *fx, Real_t *fy, Real_t *fz,
-    Real_t determ[], Real_t hgcoef, Index_t numElem, Index_t numNode) {
+    const Real_t *yd, const Real_t *zd, Index_t **nodelist, const Real_t *volo,
+    const Real_t *v, const Real_t *ss, const Real_t *elemMass,
+    const Index_t *nodeElemStart, const Index_t *nodeElemCornerList, Real_t *fx,
+    Real_t *fy, Real_t *fz, Real_t determ[], Real_t hgcoef, Index_t numElem,
+    Index_t numNode) {
   Index_t numElem8 = numElem * 8;
   Real_t *dvdx = AllocateReal(numElem8);
   Real_t *dvdy = AllocateReal(numElem8);
@@ -832,13 +986,12 @@ static inline void CalcHourglassControlForElems(
   Real_t *y8n = AllocateReal(numElem8);
   Real_t *z8n = AllocateReal(numElem8);
 
-  #pragma omp parallel for firstprivate(numElem)
+#pragma omp parallel for firstprivate(numElem)
   for (Index_t i = 0; i < numElem; ++i) {
     Real_t x1[8], y1[8], z1[8];
     Real_t pfx[8], pfy[8], pfz[8];
 
-    Index_t *elemToNode = (Index_t *)&nodelist[8 * i];
-    CollectNodesToElemNodes(x, y, z, elemToNode, x1, y1, z1);
+    CollectNodesToElemNodes(x, y, z, nodelist[i], x1, y1, z1);
 
     CalcElemVolumeDerivative(pfx, pfy, pfz, x1, y1, z1);
 
@@ -880,9 +1033,9 @@ static inline void CalcHourglassControlForElems(
 
 static inline void CalcVolumeForceForElems(
     const Real_t *x, const Real_t *y, const Real_t *z, const Real_t *xd,
-    const Real_t *yd, const Real_t *zd, const Index_t *nodelist,
-    const Real_t *volo, const Real_t *v, const Real_t *p, const Real_t *q,
-    const Real_t *ss, const Real_t *elemMass, const Index_t *nodeElemStart,
+    const Real_t *yd, const Real_t *zd, Index_t **nodelist, const Real_t *volo,
+    const Real_t *v, const Real_t *p, const Real_t *q, const Real_t *ss,
+    const Real_t *elemMass, const Index_t *nodeElemStart,
     const Index_t *nodeElemCornerList, Real_t *fx, Real_t *fy, Real_t *fz,
     Real_t hgcoef, Index_t numElem, Index_t numNode) {
   if (numElem != 0) {
@@ -897,7 +1050,7 @@ static inline void CalcVolumeForceForElems(
                             nodeElemCornerList, fx, fy, fz, sigxx, sigyy, sigzz,
                             determ, numElem, numNode);
 
-    #pragma omp parallel for firstprivate(numElem)
+#pragma omp parallel for firstprivate(numElem)
     for (Index_t k = 0; k < numElem; ++k) {
       if (determ[k] <= 0.0) {
         exit(VolumeError);
@@ -919,14 +1072,15 @@ static inline void CalcVolumeForceForElems(
 // Calculate force for nodes
 //**************************************************
 
-static inline void CalcForceForNodes(
-    const Real_t *x, const Real_t *y, const Real_t *z, const Real_t *xd,
-    const Real_t *yd, const Real_t *zd, const Index_t *nodelist,
-    const Real_t *volo, const Real_t *v, const Real_t *p, const Real_t *q,
-    const Real_t *ss, const Real_t *elemMass, const Index_t *nodeElemStart,
-    const Index_t *nodeElemCornerList, Real_t *fx, Real_t *fy, Real_t *fz,
-    Real_t hgcoef, Index_t numElem, Index_t numNode) {
-  #pragma omp parallel for firstprivate(numNode)
+static inline void
+CalcForceForNodes(const Real_t *x, const Real_t *y, const Real_t *z,
+                  const Real_t *xd, const Real_t *yd, const Real_t *zd,
+                  Index_t **nodelist, const Real_t *volo, const Real_t *v,
+                  const Real_t *p, const Real_t *q, const Real_t *ss,
+                  const Real_t *elemMass, const Index_t *nodeElemStart,
+                  const Index_t *nodeElemCornerList, Real_t *fx, Real_t *fy,
+                  Real_t *fz, Real_t hgcoef, Index_t numElem, Index_t numNode) {
+#pragma omp parallel for firstprivate(numNode)
   for (Index_t i = 0; i < numNode; ++i) {
     fx[i] = 0.0;
     fy[i] = 0.0;
@@ -947,7 +1101,7 @@ static inline void CalcAccelerationForNodes(const Real_t *fx, const Real_t *fy,
                                             const Real_t *nodalMass,
                                             Real_t *xdd, Real_t *ydd,
                                             Real_t *zdd, Index_t numNode) {
-  #pragma omp parallel for firstprivate(numNode)
+#pragma omp parallel for firstprivate(numNode)
   for (Index_t i = 0; i < numNode; ++i) {
     xdd[i] = fx[i] / nodalMass[i];
     ydd[i] = fy[i] / nodalMass[i];
@@ -967,19 +1121,19 @@ static inline void ApplyAccelerationBoundaryConditionsForNodes(
 
   // Simplified for CARTS: use separate parallel loops
   if (symmX_size != 0) {
-    #pragma omp parallel for firstprivate(numNodeBC)
+#pragma omp parallel for firstprivate(numNodeBC)
     for (Index_t i = 0; i < numNodeBC; ++i)
       xdd[symmX[i]] = 0.0;
   }
 
   if (symmY_size != 0) {
-    #pragma omp parallel for firstprivate(numNodeBC)
+#pragma omp parallel for firstprivate(numNodeBC)
     for (Index_t i = 0; i < numNodeBC; ++i)
       ydd[symmY[i]] = 0.0;
   }
 
   if (symmZ_size != 0) {
-    #pragma omp parallel for firstprivate(numNodeBC)
+#pragma omp parallel for firstprivate(numNodeBC)
     for (Index_t i = 0; i < numNodeBC; ++i)
       zdd[symmZ[i]] = 0.0;
   }
@@ -993,7 +1147,7 @@ static inline void CalcVelocityForNodes(Real_t *xd, Real_t *yd, Real_t *zd,
                                         const Real_t *xdd, const Real_t *ydd,
                                         const Real_t *zdd, const Real_t dt,
                                         const Real_t u_cut, Index_t numNode) {
-  #pragma omp parallel for firstprivate(numNode)
+#pragma omp parallel for firstprivate(numNode)
   for (Index_t i = 0; i < numNode; ++i) {
     Real_t xdtmp = xd[i] + xdd[i] * dt;
     if (FABS(xdtmp) < u_cut)
@@ -1020,7 +1174,7 @@ static inline void CalcPositionForNodes(Real_t *x, Real_t *y, Real_t *z,
                                         const Real_t *xd, const Real_t *yd,
                                         const Real_t *zd, const Real_t dt,
                                         Index_t numNode) {
-  #pragma omp parallel for firstprivate(numNode)
+#pragma omp parallel for firstprivate(numNode)
   for (Index_t i = 0; i < numNode; ++i) {
     x[i] += xd[i] * dt;
     y[i] += yd[i] * dt;
@@ -1035,7 +1189,7 @@ static inline void CalcPositionForNodes(Real_t *x, Real_t *y, Real_t *z,
 static inline void LagrangeNodal(
     Real_t *x, Real_t *y, Real_t *z, Real_t *xd, Real_t *yd, Real_t *zd,
     Real_t *xdd, Real_t *ydd, Real_t *zdd, Real_t *fx, Real_t *fy, Real_t *fz,
-    const Real_t *nodalMass, const Index_t *nodelist, const Real_t *volo,
+    const Real_t *nodalMass, Index_t **nodelist, const Real_t *volo,
     const Real_t *v, const Real_t *p, const Real_t *q, const Real_t *ss,
     const Real_t *elemMass, const Index_t *nodeElemStart,
     const Index_t *nodeElemCornerList, const Index_t *symmX,
@@ -1045,12 +1199,22 @@ static inline void LagrangeNodal(
   CalcForceForNodes(x, y, z, xd, yd, zd, nodelist, volo, v, p, q, ss, elemMass,
                     nodeElemStart, nodeElemCornerList, fx, fy, fz, hgcoef,
                     numElem, numNode);
+  DebugPrintElem0Nodal("post-force", nodelist, x, y, z, xd, yd, zd, xdd, ydd,
+                       zdd, fx, fy, fz);
   CalcAccelerationForNodes(fx, fy, fz, nodalMass, xdd, ydd, zdd, numNode);
+  DebugPrintElem0Nodal("post-accel", nodelist, x, y, z, xd, yd, zd, xdd, ydd,
+                       zdd, fx, fy, fz);
   ApplyAccelerationBoundaryConditionsForNodes(xdd, ydd, zdd, symmX, symmY,
                                               symmZ, symmX_size, symmY_size,
                                               symmZ_size, sizeX);
+  DebugPrintElem0Nodal("post-bc", nodelist, x, y, z, xd, yd, zd, xdd, ydd, zdd,
+                       fx, fy, fz);
   CalcVelocityForNodes(xd, yd, zd, xdd, ydd, zdd, deltatime, u_cut, numNode);
+  DebugPrintElem0Nodal("post-vel", nodelist, x, y, z, xd, yd, zd, xdd, ydd,
+                       zdd, fx, fy, fz);
   CalcPositionForNodes(x, y, z, xd, yd, zd, deltatime, numNode);
+  DebugPrintElem0Nodal("post-pos", nodelist, x, y, z, xd, yd, zd, xdd, ydd,
+                       zdd, fx, fy, fz);
 }
 
 //**************************************************
@@ -1253,14 +1417,16 @@ CalcElemVelocityGradient(const Real_t *const xvel, const Real_t *const yvel,
 // Calculate kinematics for elements
 //**************************************************
 
-static inline void CalcKinematicsForElems(const Real_t *x, const Real_t *y, const Real_t *z,
-                            const Real_t *xd, const Real_t *yd,
-                            const Real_t *zd, const Real_t *volo,
-                            const Real_t *v, Real_t *delv, Real_t *arealg,
-                            Real_t *dxx, Real_t *dyy, Real_t *dzz,
-                            const Index_t *nodelist, Real_t *vnew,
-                            Real_t deltaTime, Index_t numElem) {
-  #pragma omp parallel for firstprivate(numElem, deltaTime)
+static inline void CalcKinematicsForElems(
+    const Real_t *x, const Real_t *y, const Real_t *z, const Real_t *xd,
+    const Real_t *yd, const Real_t *zd, const Real_t *volo, const Real_t *v,
+    Real_t *delv, Real_t *arealg, Real_t *dxx, Real_t *dyy, Real_t *dzz,
+    Index_t **nodelist, Real_t *vnew, Real_t deltaTime, Index_t numElem) {
+  if (lulesh_debug_enabled()) {
+    printf("[DEBUG][%d][kinematics-dt] deltaTime=%.6e\n", lulesh_debug_cycle,
+           deltaTime);
+  }
+#pragma omp parallel for firstprivate(numElem)
   for (Index_t k = 0; k < numElem; ++k) {
     Real_t B[3][8];
     Real_t D[6];
@@ -1274,20 +1440,18 @@ static inline void CalcKinematicsForElems(const Real_t *x, const Real_t *y, cons
 
     Real_t volume;
     Real_t relativeVolume;
-    const Index_t *const elemToNode = &nodelist[8 * k];
 
-    CollectNodesToElemNodes(x, y, z, elemToNode, x_local, y_local, z_local);
+    CollectNodesToElemNodes(x, y, z, nodelist[k], x_local, y_local, z_local);
 
     volume = CalcElemVolume(x_local, y_local, z_local);
     relativeVolume = volume / volo[k];
     vnew[k] = relativeVolume;
     delv[k] = relativeVolume - v[k];
 
-    arealg[k] =
-        CalcElemCharacteristicLength(x_local, y_local, z_local, volume);
+    arealg[k] = CalcElemCharacteristicLength(x_local, y_local, z_local, volume);
 
     for (Index_t lnode = 0; lnode < 8; ++lnode) {
-      Index_t gnode = elemToNode[lnode];
+      Index_t gnode = nodelist[k][lnode];
       xd_local[lnode] = xd[gnode];
       yd_local[lnode] = yd[gnode];
       zd_local[lnode] = zd[gnode];
@@ -1303,6 +1467,25 @@ static inline void CalcKinematicsForElems(const Real_t *x, const Real_t *y, cons
     CalcElemShapeFunctionDerivatives(x_local, y_local, z_local, B, &detJ);
 
     CalcElemVelocityGradient(xd_local, yd_local, zd_local, B, detJ, D);
+    if (lulesh_debug_enabled() && k == 0) {
+      Real_t sum_x = 0.0, sum_y = 0.0, sum_z = 0.0;
+      Real_t sum_xd = 0.0, sum_yd = 0.0, sum_zd = 0.0;
+      for (Index_t i = 0; i < 8; ++i) {
+        sum_x += x_local[i];
+        sum_y += y_local[i];
+        sum_z += z_local[i];
+        sum_xd += xd_local[i];
+        sum_yd += yd_local[i];
+        sum_zd += zd_local[i];
+      }
+      printf("[DEBUG][%d][kinematics-k0] nodes={%d,%d,%d,%d,%d,%d,%d,%d} "
+             "dt2=%.6e detJ=%.6e D0=%.6e D1=%.6e D2=%.6e "
+             "sumx=%.6e sumy=%.6e sumz=%.6e sumxd=%.6e sumyd=%.6e sumzd=%.6e\n",
+             lulesh_debug_cycle, nodelist[k][0], nodelist[k][1],
+             nodelist[k][2], nodelist[k][3], nodelist[k][4], nodelist[k][5],
+             nodelist[k][6], nodelist[k][7], dt2, detJ, D[0], D[1], D[2],
+             sum_x, sum_y, sum_z, sum_xd, sum_yd, sum_zd);
+    }
 
     dxx[k] = D[0];
     dyy[k] = D[1];
@@ -1314,11 +1497,12 @@ static inline void CalcKinematicsForElems(const Real_t *x, const Real_t *y, cons
 // Calculate Lagrange elements
 //**************************************************
 
-static inline void CalcLagrangeElements(
-    const Real_t *x, const Real_t *y, const Real_t *z, const Real_t *xd,
-    const Real_t *yd, const Real_t *zd, const Real_t *volo, const Real_t *v,
-    Real_t *delv, Real_t *arealg, Real_t *vdov, const Index_t *nodelist,
-    Real_t *vnew, Real_t deltatime, Index_t numElem) {
+static inline void
+CalcLagrangeElements(const Real_t *x, const Real_t *y, const Real_t *z,
+                     const Real_t *xd, const Real_t *yd, const Real_t *zd,
+                     const Real_t *volo, const Real_t *v, Real_t *delv,
+                     Real_t *arealg, Real_t *vdov, Index_t **nodelist,
+                     Real_t *vnew, Real_t deltatime, Index_t numElem) {
   if (numElem > 0) {
     // Allocate temporary strain arrays
     Real_t *dxx = AllocateReal(numElem);
@@ -1327,8 +1511,14 @@ static inline void CalcLagrangeElements(
 
     CalcKinematicsForElems(x, y, z, xd, yd, zd, volo, v, delv, arealg, dxx, dyy,
                            dzz, nodelist, vnew, deltatime, numElem);
+    if (lulesh_debug_enabled()) {
+      printf("[DEBUG][%d][post-kinematics] dxx0=%.6e dyy0=%.6e dzz0=%.6e "
+             "vnew0=%.6e delv0=%.6e arealg0=%.6e\n",
+             lulesh_debug_cycle, dxx[0], dyy[0], dzz[0], vnew[0], delv[0],
+             arealg[0]);
+    }
 
-    #pragma omp parallel for firstprivate(numElem)
+#pragma omp parallel for firstprivate(numElem)
     for (Index_t k = 0; k < numElem; ++k) {
       Real_t vdov_k = dxx[k] + dyy[k] + dzz[k];
       Real_t vdovthird = vdov_k / 3.0;
@@ -1341,6 +1531,10 @@ static inline void CalcLagrangeElements(
       if (vnew[k] <= 0.0) {
         exit(VolumeError);
       }
+    }
+    if (lulesh_debug_enabled()) {
+      printf("[DEBUG][%d][post-vdov] vdov0=%.6e dxx0=%.6e dyy0=%.6e dzz0=%.6e\n",
+             lulesh_debug_cycle, vdov[0], dxx[0], dyy[0], dzz[0]);
     }
 
     // Deallocate temporary strain arrays
@@ -1356,26 +1550,24 @@ static inline void CalcLagrangeElements(
 
 static inline void CalcMonotonicQGradientsForElems(
     const Real_t *x, const Real_t *y, const Real_t *z, const Real_t *xd,
-    const Real_t *yd, const Real_t *zd, const Real_t *volo,
-    const Index_t *nodelist, Real_t *delx_zeta, Real_t *delv_zeta,
-    Real_t *delx_xi, Real_t *delv_xi, Real_t *delx_eta, Real_t *delv_eta,
-    Real_t vnew[], Index_t numElem) {
+    const Real_t *yd, const Real_t *zd, const Real_t *volo, Index_t **nodelist,
+    Real_t *delx_zeta, Real_t *delv_zeta, Real_t *delx_xi, Real_t *delv_xi,
+    Real_t *delx_eta, Real_t *delv_eta, Real_t vnew[], Index_t numElem) {
   const Real_t ptiny = 1.e-36;
 
-  #pragma omp parallel for firstprivate(numElem)
+#pragma omp parallel for firstprivate(numElem)
   for (Index_t i = 0; i < numElem; ++i) {
     Real_t ax, ay, az;
     Real_t dxv, dyv, dzv;
 
-    const Index_t *elemToNode = &nodelist[8 * i];
-    Index_t n0 = elemToNode[0];
-    Index_t n1 = elemToNode[1];
-    Index_t n2 = elemToNode[2];
-    Index_t n3 = elemToNode[3];
-    Index_t n4 = elemToNode[4];
-    Index_t n5 = elemToNode[5];
-    Index_t n6 = elemToNode[6];
-    Index_t n7 = elemToNode[7];
+    Index_t n0 = nodelist[i][0];
+    Index_t n1 = nodelist[i][1];
+    Index_t n2 = nodelist[i][2];
+    Index_t n3 = nodelist[i][3];
+    Index_t n4 = nodelist[i][4];
+    Index_t n5 = nodelist[i][5];
+    Index_t n6 = nodelist[i][6];
+    Index_t n7 = nodelist[i][7];
 
     Real_t x0 = x[n0];
     Real_t x1 = x[n1];
@@ -1509,10 +1701,9 @@ static inline void CalcMonotonicQRegionForElems(
     const Real_t *vdov, const Real_t *elemMass, const Real_t *volo,
     const Int_t *elemBC, const Index_t *lxim, const Index_t *lxip,
     const Index_t *letam, const Index_t *letap, const Index_t *lzetam,
-    const Index_t *lzetap, Index_t regElemSize,
-    Real_t *qq, Real_t *ql, Real_t vnew[], Real_t ptiny,
-    Real_t monoq_limiter_mult, Real_t monoq_max_slope, Real_t qlc_monoq,
-    Real_t qqc_monoq) {
+    const Index_t *lzetap, Index_t regElemSize, Real_t *qq, Real_t *ql,
+    Real_t vnew[], Real_t ptiny, Real_t monoq_limiter_mult,
+    Real_t monoq_max_slope, Real_t qlc_monoq, Real_t qqc_monoq) {
 
   for (Index_t i = 0; i < regElemSize; ++i) {
     Real_t qlin, qquad;
@@ -1523,37 +1714,32 @@ static inline void CalcMonotonicQRegionForElems(
     /*  phixi     */
     Real_t norm = 1.0 / (delv_xi[i] + ptiny);
 
-    switch (bcMask & XI_M) {
-    case XI_M_COMM:
-    case 0:
-      delvm = delv_xi[lxim[i]];
-      break;
-    case XI_M_SYMM:
-      delvm = delv_xi[i];
-      break;
-    case XI_M_FREE:
-      delvm = 0.0;
-      break;
-    default:
-      fprintf(stderr, "Error in switch at %s line %d\n", __FILE__, __LINE__);
-      delvm = 0;
-      break;
+    // Note: Using if-else instead of switch due to polygeist fallthrough bug
+    {
+      Int_t xiMask = bcMask & XI_M;
+      if (xiMask == XI_M_COMM || xiMask == 0) {
+        delvm = delv_xi[lxim[i]];
+      } else if (xiMask == XI_M_SYMM) {
+        delvm = delv_xi[i];
+      } else if (xiMask == XI_M_FREE) {
+        delvm = 0.0;
+      } else {
+        fprintf(stderr, "Error in switch at %s line %d\n", __FILE__, __LINE__);
+        delvm = 0;
+      }
     }
-    switch (bcMask & XI_P) {
-    case XI_P_COMM:
-    case 0:
-      delvp = delv_xi[lxip[i]];
-      break;
-    case XI_P_SYMM:
-      delvp = delv_xi[i];
-      break;
-    case XI_P_FREE:
-      delvp = 0.0;
-      break;
-    default:
-      fprintf(stderr, "Error in switch at %s line %d\n", __FILE__, __LINE__);
-      delvp = 0;
-      break;
+    {
+      Int_t xiPMask = bcMask & XI_P;
+      if (xiPMask == XI_P_COMM || xiPMask == 0) {
+        delvp = delv_xi[lxip[i]];
+      } else if (xiPMask == XI_P_SYMM) {
+        delvp = delv_xi[i];
+      } else if (xiPMask == XI_P_FREE) {
+        delvp = 0.0;
+      } else {
+        fprintf(stderr, "Error in switch at %s line %d\n", __FILE__, __LINE__);
+        delvp = 0;
+      }
     }
 
     delvm = delvm * norm;
@@ -1576,37 +1762,32 @@ static inline void CalcMonotonicQRegionForElems(
     /*  phieta     */
     norm = 1.0 / (delv_eta[i] + ptiny);
 
-    switch (bcMask & ETA_M) {
-    case ETA_M_COMM:
-    case 0:
-      delvm = delv_eta[letam[i]];
-      break;
-    case ETA_M_SYMM:
-      delvm = delv_eta[i];
-      break;
-    case ETA_M_FREE:
-      delvm = 0.0;
-      break;
-    default:
-      fprintf(stderr, "Error in switch at %s line %d\n", __FILE__, __LINE__);
-      delvm = 0;
-      break;
+    // Note: Using if-else instead of switch due to polygeist fallthrough bug
+    {
+      Int_t etaMask = bcMask & ETA_M;
+      if (etaMask == ETA_M_COMM || etaMask == 0) {
+        delvm = delv_eta[letam[i]];
+      } else if (etaMask == ETA_M_SYMM) {
+        delvm = delv_eta[i];
+      } else if (etaMask == ETA_M_FREE) {
+        delvm = 0.0;
+      } else {
+        fprintf(stderr, "Error in switch at %s line %d\n", __FILE__, __LINE__);
+        delvm = 0;
+      }
     }
-    switch (bcMask & ETA_P) {
-    case ETA_P_COMM:
-    case 0:
-      delvp = delv_eta[letap[i]];
-      break;
-    case ETA_P_SYMM:
-      delvp = delv_eta[i];
-      break;
-    case ETA_P_FREE:
-      delvp = 0.0;
-      break;
-    default:
-      fprintf(stderr, "Error in switch at %s line %d\n", __FILE__, __LINE__);
-      delvp = 0;
-      break;
+    {
+      Int_t etaPMask = bcMask & ETA_P;
+      if (etaPMask == ETA_P_COMM || etaPMask == 0) {
+        delvp = delv_eta[letap[i]];
+      } else if (etaPMask == ETA_P_SYMM) {
+        delvp = delv_eta[i];
+      } else if (etaPMask == ETA_P_FREE) {
+        delvp = 0.0;
+      } else {
+        fprintf(stderr, "Error in switch at %s line %d\n", __FILE__, __LINE__);
+        delvp = 0;
+      }
     }
 
     delvm = delvm * norm;
@@ -1629,37 +1810,32 @@ static inline void CalcMonotonicQRegionForElems(
     /*  phizeta     */
     norm = 1.0 / (delv_zeta[i] + ptiny);
 
-    switch (bcMask & ZETA_M) {
-    case ZETA_M_COMM:
-    case 0:
-      delvm = delv_zeta[lzetam[i]];
-      break;
-    case ZETA_M_SYMM:
-      delvm = delv_zeta[i];
-      break;
-    case ZETA_M_FREE:
-      delvm = 0.0;
-      break;
-    default:
-      fprintf(stderr, "Error in switch at %s line %d\n", __FILE__, __LINE__);
-      delvm = 0;
-      break;
+    // Note: Using if-else instead of switch due to polygeist fallthrough bug
+    {
+      Int_t zetaMask = bcMask & ZETA_M;
+      if (zetaMask == ZETA_M_COMM || zetaMask == 0) {
+        delvm = delv_zeta[lzetam[i]];
+      } else if (zetaMask == ZETA_M_SYMM) {
+        delvm = delv_zeta[i];
+      } else if (zetaMask == ZETA_M_FREE) {
+        delvm = 0.0;
+      } else {
+        fprintf(stderr, "Error in switch at %s line %d\n", __FILE__, __LINE__);
+        delvm = 0;
+      }
     }
-    switch (bcMask & ZETA_P) {
-    case ZETA_P_COMM:
-    case 0:
-      delvp = delv_zeta[lzetap[i]];
-      break;
-    case ZETA_P_SYMM:
-      delvp = delv_zeta[i];
-      break;
-    case ZETA_P_FREE:
-      delvp = 0.0;
-      break;
-    default:
-      fprintf(stderr, "Error in switch at %s line %d\n", __FILE__, __LINE__);
-      delvp = 0;
-      break;
+    {
+      Int_t zetaPMask = bcMask & ZETA_P;
+      if (zetaPMask == ZETA_P_COMM || zetaPMask == 0) {
+        delvp = delv_zeta[lzetap[i]];
+      } else if (zetaPMask == ZETA_P_SYMM) {
+        delvp = delv_zeta[i];
+      } else if (zetaPMask == ZETA_P_FREE) {
+        delvp = 0.0;
+      } else {
+        fprintf(stderr, "Error in switch at %s line %d\n", __FILE__, __LINE__);
+        delvp = 0;
+      }
     }
 
     delvm = delvm * norm;
@@ -1740,7 +1916,7 @@ static inline void CalcMonotonicQForElems(
 static inline void CalcQForElems(
     const Real_t *x, const Real_t *y, const Real_t *z, const Real_t *xd,
     const Real_t *yd, const Real_t *zd, const Real_t *volo, const Real_t *vdov,
-    const Real_t *elemMass, const Index_t *nodelist, const Int_t *elemBC,
+    const Real_t *elemMass, Index_t **nodelist, const Int_t *elemBC,
     const Index_t *lxim, const Index_t *lxip, const Index_t *letam,
     const Index_t *letap, const Index_t *lzetam, const Index_t *lzetap,
     const Index_t *regElemSize, Real_t *q, Real_t *qq, Real_t *ql,
@@ -1797,13 +1973,13 @@ static inline void CalcPressureForElems(Real_t *p_new, Real_t *bvc,
                                         Real_t pmin, Real_t p_cut,
                                         Real_t eosvmax, Index_t length) {
 
-  #pragma omp parallel for firstprivate(length)
+#pragma omp parallel for firstprivate(length)
   for (Index_t i = 0; i < length; ++i) {
     bvc[i] = 2.0 / 3.0 * (compression[i] + 1.0);
     pbvc[i] = 2.0 / 3.0;
   }
 
-  #pragma omp parallel for firstprivate(length, pmin, p_cut, eosvmax)
+#pragma omp parallel for firstprivate(length, pmin, p_cut, eosvmax)
   for (Index_t i = 0; i < length; ++i) {
     p_new[i] = bvc[i] * e_old[i];
 
@@ -1822,11 +1998,12 @@ CalcEnergyForElems(Real_t *p_new, Real_t *e_new, Real_t *q_new, Real_t *bvc,
                    Real_t *compression, Real_t *compHalfStep, Real_t *vnewc,
                    Real_t *work, Real_t *delvc, Real_t pmin, Real_t p_cut,
                    Real_t e_cut, Real_t q_cut, Real_t emin, Real_t *qq_old,
-                   Real_t *ql_old, Real_t rho0, Real_t eosvmax, Index_t length) {
+                   Real_t *ql_old, Real_t rho0, Real_t eosvmax,
+                   Index_t length) {
 
   Real_t *pHalfStep = AllocateReal(length);
 
-  #pragma omp parallel for firstprivate(length, emin)
+#pragma omp parallel for firstprivate(length, emin)
   for (Index_t i = 0; i < length; ++i) {
     e_new[i] =
         e_old[i] - 0.5 * delvc[i] * (p_old[i] + q_old[i]) + 0.5 * work[i];
@@ -1838,14 +2015,14 @@ CalcEnergyForElems(Real_t *p_new, Real_t *e_new, Real_t *q_new, Real_t *bvc,
   CalcPressureForElems(pHalfStep, bvc, pbvc, e_new, compHalfStep, vnewc, pmin,
                        p_cut, eosvmax, length);
 
-  #pragma omp parallel for firstprivate(length, rho0)
+#pragma omp parallel for firstprivate(length, rho0)
   for (Index_t i = 0; i < length; ++i) {
     Real_t vhalf = 1.0 / (1.0 + compHalfStep[i]);
+    Real_t ssc = 0.0;
     if (delvc[i] > 0.0) {
       q_new[i] = 0.0;
     } else {
-      Real_t ssc =
-          (pbvc[i] * e_new[i] + vhalf * vhalf * bvc[i] * pHalfStep[i]) / rho0;
+      ssc = (pbvc[i] * e_new[i] + vhalf * vhalf * bvc[i] * pHalfStep[i]) / rho0;
       if (ssc <= 0.1111111e-36) {
         ssc = 0.3333333e-18;
       } else {
@@ -1858,7 +2035,7 @@ CalcEnergyForElems(Real_t *p_new, Real_t *e_new, Real_t *q_new, Real_t *bvc,
                                4.0 * (pHalfStep[i] + q_new[i]));
   }
 
-  #pragma omp parallel for firstprivate(length, emin, e_cut)
+#pragma omp parallel for firstprivate(length, emin, e_cut)
   for (Index_t i = 0; i < length; ++i) {
     e_new[i] += 0.5 * work[i];
     if (FABS(e_new[i]) < e_cut) {
@@ -1872,7 +2049,7 @@ CalcEnergyForElems(Real_t *p_new, Real_t *e_new, Real_t *q_new, Real_t *bvc,
   CalcPressureForElems(p_new, bvc, pbvc, e_new, compression, vnewc, pmin, p_cut,
                        eosvmax, length);
 
-  #pragma omp parallel for firstprivate(length, rho0, emin, e_cut)
+#pragma omp parallel for firstprivate(length, rho0, emin, e_cut)
   for (Index_t i = 0; i < length; ++i) {
     const Real_t sixth = 1.0 / 6.0;
     Real_t q_tilde;
@@ -1906,7 +2083,7 @@ CalcEnergyForElems(Real_t *p_new, Real_t *e_new, Real_t *q_new, Real_t *bvc,
   CalcPressureForElems(p_new, bvc, pbvc, e_new, compression, vnewc, pmin, p_cut,
                        eosvmax, length);
 
-  #pragma omp parallel for firstprivate(length, rho0, q_cut)
+#pragma omp parallel for firstprivate(length, rho0, q_cut)
   for (Index_t i = 0; i < length; ++i) {
     if (delvc[i] <= 0.0) {
       Real_t ssc =
@@ -1931,7 +2108,7 @@ static inline void CalcSoundSpeedForElems(Real_t *ss, Real_t *vnewc,
                                           Real_t *bvc, Real_t ss4o3,
                                           Index_t len) {
 
-  #pragma omp parallel for firstprivate(rho0, ss4o3)
+#pragma omp parallel for firstprivate(rho0, ss4o3)
   for (Index_t i = 0; i < len; ++i) {
     Real_t ssTmp =
         (pbvc[i] * enewc[i] + vnewc[i] * vnewc[i] * bvc[i] * pnewc[i]) / rho0;
@@ -1944,11 +2121,12 @@ static inline void CalcSoundSpeedForElems(Real_t *ss, Real_t *vnewc,
   }
 }
 
-static inline void EvalEOSForElems(
-    Real_t *e, Real_t *p, Real_t *q, Real_t *qq, Real_t *ql, Real_t *ss,
-    const Real_t *delv, Real_t *vnewc, Int_t numElemReg, Int_t rep,
-    Real_t e_cut, Real_t p_cut, Real_t ss4o3, Real_t q_cut, Real_t eosvmax,
-    Real_t eosvmin, Real_t pmin, Real_t emin, Real_t rho0) {
+static inline void EvalEOSForElems(Real_t *e, Real_t *p, Real_t *q, Real_t *qq,
+                                   Real_t *ql, Real_t *ss, const Real_t *delv,
+                                   Real_t *vnewc, Int_t numElemReg, Int_t rep,
+                                   Real_t e_cut, Real_t p_cut, Real_t ss4o3,
+                                   Real_t q_cut, Real_t eosvmax, Real_t eosvmin,
+                                   Real_t pmin, Real_t emin, Real_t rho0) {
 
   Real_t *e_old = AllocateReal(numElemReg);
   Real_t *delvc = AllocateReal(numElemReg);
@@ -1966,8 +2144,8 @@ static inline void EvalEOSForElems(
   Real_t *pbvc = AllocateReal(numElemReg);
 
   for (Int_t j = 0; j < rep; j++) {
-    // Simplified for CARTS: use separate parallel loops
-    #pragma omp parallel for firstprivate(numElemReg)
+// Simplified for CARTS: use separate parallel loops
+#pragma omp parallel for firstprivate(numElemReg)
     for (Index_t i = 0; i < numElemReg; ++i) {
       e_old[i] = e[i];
       delvc[i] = delv[i];
@@ -1977,7 +2155,7 @@ static inline void EvalEOSForElems(
       ql_old[i] = ql[i];
     }
 
-    #pragma omp parallel for firstprivate(numElemReg)
+#pragma omp parallel for firstprivate(numElemReg)
     for (Index_t i = 0; i < numElemReg; ++i) {
       Real_t vchalf;
       compression[i] = 1.0 / vnewc[i] - 1.0;
@@ -1986,7 +2164,7 @@ static inline void EvalEOSForElems(
     }
 
     if (eosvmin != 0.0) {
-      #pragma omp parallel for firstprivate(numElemReg, eosvmin)
+#pragma omp parallel for firstprivate(numElemReg, eosvmin)
       for (Index_t i = 0; i < numElemReg; ++i) {
         if (vnewc[i] <= eosvmin) {
           compHalfStep[i] = compression[i];
@@ -1995,7 +2173,7 @@ static inline void EvalEOSForElems(
     }
 
     if (eosvmax != 0.0) {
-      #pragma omp parallel for firstprivate(numElemReg, eosvmax)
+#pragma omp parallel for firstprivate(numElemReg, eosvmax)
       for (Index_t i = 0; i < numElemReg; ++i) {
         if (vnewc[i] >= eosvmax) {
           p_old[i] = 0.0;
@@ -2005,7 +2183,7 @@ static inline void EvalEOSForElems(
       }
     }
 
-    #pragma omp parallel for firstprivate(numElemReg)
+#pragma omp parallel for firstprivate(numElemReg)
     for (Index_t i = 0; i < numElemReg; ++i) {
       work[i] = 0.0;
     }
@@ -2016,7 +2194,7 @@ static inline void EvalEOSForElems(
                        numElemReg);
   }
 
-  #pragma omp parallel for firstprivate(numElemReg)
+#pragma omp parallel for firstprivate(numElemReg)
   for (Index_t i = 0; i < numElemReg; ++i) {
     p[i] = p_new[i];
     e[i] = e_new[i];
@@ -2052,7 +2230,7 @@ static inline void ApplyMaterialPropertiesForElems(
   if (numElem != 0) {
     // Simplified for CARTS: use separate parallel loops
     if (eosvmin != 0.0) {
-      #pragma omp parallel for firstprivate(numElem)
+#pragma omp parallel for firstprivate(numElem)
       for (Index_t i = 0; i < numElem; ++i) {
         if (vnew[i] < eosvmin)
           vnew[i] = eosvmin;
@@ -2060,14 +2238,14 @@ static inline void ApplyMaterialPropertiesForElems(
     }
 
     if (eosvmax != 0.0) {
-      #pragma omp parallel for firstprivate(numElem)
+#pragma omp parallel for firstprivate(numElem)
       for (Index_t i = 0; i < numElem; ++i) {
         if (vnew[i] > eosvmax)
           vnew[i] = eosvmax;
       }
     }
 
-    #pragma omp parallel for firstprivate(numElem)
+#pragma omp parallel for firstprivate(numElem)
     for (Index_t i = 0; i < numElem; ++i) {
       Real_t vc = v[i];
       if (eosvmin != 0.0) {
@@ -2101,7 +2279,7 @@ static inline void ApplyMaterialPropertiesForElems(
 static inline void UpdateVolumesForElems(Real_t *v, Real_t *vnew, Real_t v_cut,
                                          Index_t length) {
   if (length != 0) {
-    #pragma omp parallel for firstprivate(length, v_cut)
+#pragma omp parallel for firstprivate(length, v_cut)
     for (Index_t i = 0; i < length; ++i) {
       Real_t tmpV = vnew[i];
       if (FABS(tmpV - 1.0) < v_cut)
@@ -2115,28 +2293,26 @@ static inline void LagrangeElements(
     const Real_t *x, const Real_t *y, const Real_t *z, const Real_t *xd,
     const Real_t *yd, const Real_t *zd, Real_t *e, Real_t *p, Real_t *q,
     Real_t *qq, Real_t *ql, Real_t *ss, Real_t *v, Real_t *volo, Real_t *delv,
-    Real_t *arealg, Real_t *vdov, const Index_t *nodelist, const Int_t *elemBC,
-    const Index_t *lxim, const Index_t *lxip, const Index_t *letam,
-    const Index_t *letap, const Index_t *lzetam, const Index_t *lzetap,
-    const Index_t *regElemSize, Index_t numElem, Index_t numReg, Index_t sizeX,
-    Index_t sizeY, Index_t sizeZ, Int_t cost, Real_t deltatime, Real_t qstop,
-    Real_t monoq_limiter_mult, Real_t monoq_max_slope, Real_t qlc_monoq,
-    Real_t qqc_monoq, Real_t eosvmin, Real_t eosvmax, Real_t e_cut,
-    Real_t p_cut, Real_t ss4o3, Real_t q_cut, Real_t v_cut, Real_t pmin,
-    Real_t emin, Real_t rho0) {
+    Real_t *arealg, Real_t *vdov, const Real_t *elemMass, Index_t **nodelist,
+    const Int_t *elemBC, const Index_t *lxim, const Index_t *lxip,
+    const Index_t *letam, const Index_t *letap, const Index_t *lzetam,
+    const Index_t *lzetap, const Index_t *regElemSize, Index_t numElem,
+    Index_t numReg, Index_t sizeX, Index_t sizeY, Index_t sizeZ, Int_t cost,
+    Real_t deltatime, Real_t qstop, Real_t monoq_limiter_mult,
+    Real_t monoq_max_slope, Real_t qlc_monoq, Real_t qqc_monoq,
+    Real_t eosvmin, Real_t eosvmax, Real_t e_cut, Real_t p_cut, Real_t ss4o3,
+    Real_t q_cut, Real_t v_cut, Real_t pmin, Real_t emin, Real_t rho0) {
   Real_t *vnew = AllocateReal(numElem);
 
   CalcLagrangeElements(x, y, z, xd, yd, zd, volo, v, delv, arealg, vdov,
                        nodelist, vnew, deltatime, numElem);
-  CalcQForElems(x, y, z, xd, yd, zd, volo, vdov, (const Real_t *)arealg,
-                nodelist, elemBC, lxim, lxip, letam, letap, lzetam, lzetap,
-                regElemSize, q, qq, ql, vnew, numElem, numReg, sizeX, sizeY,
-                sizeZ, qstop, monoq_limiter_mult, monoq_max_slope, qlc_monoq,
-                qqc_monoq);
-  ApplyMaterialPropertiesForElems(e, p, q, qq, ql, ss, v, delv, vnew,
-                                  regElemSize, numElem, numReg, cost, eosvmin,
-                                  eosvmax, e_cut, p_cut, ss4o3, q_cut, pmin,
-                                  emin, rho0);
+  CalcQForElems(x, y, z, xd, yd, zd, volo, vdov, elemMass, nodelist, elemBC,
+                lxim, lxip, letam, letap, lzetam, lzetap, regElemSize, q, qq,
+                ql, vnew, numElem, numReg, sizeX, sizeY, sizeZ, qstop,
+                monoq_limiter_mult, monoq_max_slope, qlc_monoq, qqc_monoq);
+  ApplyMaterialPropertiesForElems(
+      e, p, q, qq, ql, ss, v, delv, vnew, regElemSize, numElem, numReg, cost,
+      eosvmin, eosvmax, e_cut, p_cut, ss4o3, q_cut, pmin, emin, rho0);
   UpdateVolumesForElems(v, vnew, v_cut, numElem);
 
   free(vnew);
@@ -2146,9 +2322,11 @@ static inline void LagrangeElements(
 // Time constraints (simplified)
 //**************************************************
 
-static inline void CalcCourantConstraintForElems(
-    const Real_t *ss, const Real_t *arealg, const Real_t *vdov, Index_t length,
-    Real_t qqc, Real_t *dtcourant) {
+static inline void CalcCourantConstraintForElems(const Real_t *ss,
+                                                 const Real_t *arealg,
+                                                 const Real_t *vdov,
+                                                 Index_t length, Real_t qqc,
+                                                 Real_t *dtcourant) {
   Real_t dtcourant_tmp = *dtcourant;
   Real_t qqc2 = 64.0 * qqc * qqc;
 
@@ -2189,10 +2367,11 @@ static inline void CalcHydroConstraintForElems(const Real_t *vdov,
   *dthydro = dthydro_tmp;
 }
 
-static inline void CalcTimeConstraintsForElems(
-    const Real_t *ss, const Real_t *arealg, const Real_t *vdov,
-    const Index_t *regElemSize, Index_t numReg, Real_t qqc, Real_t dvovmax,
-    Real_t *dtcourant, Real_t *dthydro) {
+static inline void
+CalcTimeConstraintsForElems(const Real_t *ss, const Real_t *arealg,
+                            const Real_t *vdov, const Index_t *regElemSize,
+                            Index_t numReg, Real_t qqc, Real_t dvovmax,
+                            Real_t *dtcourant, Real_t *dthydro) {
   *dtcourant = 1.0e+20;
   *dthydro = 1.0e+20;
 
@@ -2212,32 +2391,35 @@ static inline void LagrangeLeapFrog(
     Real_t *xdd, Real_t *ydd, Real_t *zdd, Real_t *fx, Real_t *fy, Real_t *fz,
     const Real_t *nodalMass, Real_t *e, Real_t *p, Real_t *q, Real_t *qq,
     Real_t *ql, Real_t *ss, Real_t *v, Real_t *volo, Real_t *delv,
-    Real_t *arealg, Real_t *vdov, const Real_t *elemMass,
-    const Index_t *nodelist, const Int_t *elemBC, const Index_t *lxim,
-    const Index_t *lxip, const Index_t *letam, const Index_t *letap,
-    const Index_t *lzetam, const Index_t *lzetap,
-    const Index_t *nodeElemStart, const Index_t *nodeElemCornerList,
-    const Index_t *regElemSize, const Index_t *symmX, const Index_t *symmY,
-    const Index_t *symmZ, Index_t symmX_size, Index_t symmY_size,
-    Index_t symmZ_size, Index_t numElem, Index_t numNode, Index_t numReg,
-    Index_t sizeX, Index_t sizeY, Index_t sizeZ, Int_t cost, Real_t deltatime,
-    Real_t hgcoef, Real_t u_cut, Real_t qstop, Real_t monoq_limiter_mult,
-    Real_t monoq_max_slope, Real_t qlc_monoq, Real_t qqc_monoq, Real_t eosvmin,
-    Real_t eosvmax, Real_t e_cut, Real_t p_cut, Real_t ss4o3, Real_t q_cut,
-    Real_t v_cut, Real_t pmin, Real_t emin, Real_t rho0, Real_t qqc,
-    Real_t dvovmax, Real_t *dtcourant, Real_t *dthydro) {
+    Real_t *arealg, Real_t *vdov, const Real_t *elemMass, Index_t **nodelist,
+    const Int_t *elemBC, const Index_t *lxim, const Index_t *lxip,
+    const Index_t *letam, const Index_t *letap, const Index_t *lzetam,
+    const Index_t *lzetap, const Index_t *nodeElemStart,
+    const Index_t *nodeElemCornerList, const Index_t *regElemSize,
+    const Index_t *symmX, const Index_t *symmY, const Index_t *symmZ,
+    Index_t symmX_size, Index_t symmY_size, Index_t symmZ_size, Index_t numElem,
+    Index_t numNode, Index_t numReg, Index_t sizeX, Index_t sizeY,
+    Index_t sizeZ, Int_t cost, Real_t deltatime, Real_t hgcoef, Real_t u_cut,
+    Real_t qstop, Real_t monoq_limiter_mult, Real_t monoq_max_slope,
+    Real_t qlc_monoq, Real_t qqc_monoq, Real_t eosvmin, Real_t eosvmax,
+    Real_t e_cut, Real_t p_cut, Real_t ss4o3, Real_t q_cut, Real_t v_cut,
+    Real_t pmin, Real_t emin, Real_t rho0, Real_t qqc, Real_t dvovmax,
+    Real_t *dtcourant, Real_t *dthydro) {
   LagrangeNodal(x, y, z, xd, yd, zd, xdd, ydd, zdd, fx, fy, fz, nodalMass,
                 nodelist, volo, v, p, q, ss, elemMass, nodeElemStart,
                 nodeElemCornerList, symmX, symmY, symmZ, symmX_size, symmY_size,
                 symmZ_size, hgcoef, deltatime, u_cut, numElem, numNode, sizeX);
+  DebugPrintNodal("post-nodal", x, y, z, xd, yd, zd, fx, fy, fz, numNode);
   LagrangeElements(x, y, z, xd, yd, zd, e, p, q, qq, ql, ss, v, volo, delv,
-                   arealg, vdov, nodelist, elemBC, lxim, lxip, letam, letap,
-                   lzetam, lzetap, regElemSize, numElem, numReg, sizeX, sizeY,
-                   sizeZ, cost, deltatime, qstop, monoq_limiter_mult,
+                   arealg, vdov, elemMass, nodelist, elemBC, lxim, lxip, letam,
+                   letap, lzetam, lzetap, regElemSize, numElem, numReg, sizeX,
+                   sizeY, sizeZ, cost, deltatime, qstop, monoq_limiter_mult,
                    monoq_max_slope, qlc_monoq, qqc_monoq, eosvmin, eosvmax,
                    e_cut, p_cut, ss4o3, q_cut, v_cut, pmin, emin, rho0);
+  DebugPrintElems("post-elems", e, p, q, v, delv, arealg, vdov, ss, numElem);
   CalcTimeConstraintsForElems(ss, arealg, vdov, regElemSize, numReg, qqc,
                               dvovmax, dtcourant, dthydro);
+  DebugPrintConstraints("post-constraints", *dtcourant, *dthydro);
 }
 
 //**************************************************
@@ -2284,7 +2466,7 @@ static void ParseError(const char *message, int myRank) {
 }
 
 static inline void ParseCommandLineOptions(int argc, char *argv[], int myRank,
-                             cmdLineOpts *opts) {
+                                           cmdLineOpts *opts) {
   if (argc > 1) {
     int i = 1;
     while (i < argc) {
@@ -2372,6 +2554,8 @@ int main(int argc, char *argv[]) {
 
   ParseCommandLineOptions(argc, argv, myRank, &opts);
 
+  CARTS_BENCHMARKS_START();
+
   if ((myRank == 0) && (opts.quiet == 0)) {
     printf("Running problem size %d^3 per domain until completion\n", opts.nx);
     printf("Num processors: %d\n", numRanks);
@@ -2389,6 +2573,8 @@ int main(int argc, char *argv[]) {
     printf("See help (-h) for more options\n\n");
   }
 
+  CARTS_E2E_TIMER_START("lulesh");
+
   // Grid dimensions
   Index_t edgeElems = opts.nx;
   Index_t edgeNodes = edgeElems + 1;
@@ -2399,7 +2585,7 @@ int main(int argc, char *argv[]) {
   Index_t numNode = edgeNodes * edgeNodes * edgeNodes;
   Int_t cost = opts.cost;
   Index_t numReg = opts.numReg;
-  Int_t tp = 1;  // Single processor
+  Int_t tp = 1; // Single processor
   Index_t colLoc = 0, rowLoc = 0, planeLoc = 0;
 
   // Node-centered arrays
@@ -2418,7 +2604,7 @@ int main(int argc, char *argv[]) {
   Real_t *nodalMass = AllocateReal(numNode);
 
   // Element-centered arrays
-  Index_t *nodelist = AllocateIndex(8 * numElem);
+  Index_t **nodelist = AllocateIndex2D(numElem, 8);
   Index_t *lxim = AllocateIndex(numElem);
   Index_t *lxip = AllocateIndex(numElem);
   Index_t *letam = AllocateIndex(numElem);
@@ -2485,15 +2671,14 @@ int main(int argc, char *argv[]) {
   for (Index_t pl = 0; pl < edgeElems; ++pl) {
     for (Index_t rw = 0; rw < edgeElems; ++rw) {
       for (Index_t cl = 0; cl < edgeElems; ++cl) {
-        Index_t *localNode = &nodelist[8 * zidx];
-        localNode[0] = nidx;
-        localNode[1] = nidx + 1;
-        localNode[2] = nidx + edgeNodes + 1;
-        localNode[3] = nidx + edgeNodes;
-        localNode[4] = nidx + edgeNodes * edgeNodes;
-        localNode[5] = nidx + edgeNodes * edgeNodes + 1;
-        localNode[6] = nidx + edgeNodes * edgeNodes + edgeNodes + 1;
-        localNode[7] = nidx + edgeNodes * edgeNodes + edgeNodes;
+        nodelist[zidx][0] = nidx;
+        nodelist[zidx][1] = nidx + 1;
+        nodelist[zidx][2] = nidx + edgeNodes + 1;
+        nodelist[zidx][3] = nidx + edgeNodes;
+        nodelist[zidx][4] = nidx + edgeNodes * edgeNodes;
+        nodelist[zidx][5] = nidx + edgeNodes * edgeNodes + 1;
+        nodelist[zidx][6] = nidx + edgeNodes * edgeNodes + edgeNodes + 1;
+        nodelist[zidx][7] = nidx + edgeNodes * edgeNodes + edgeNodes;
         ++zidx;
         ++nidx;
       }
@@ -2527,9 +2712,8 @@ int main(int argc, char *argv[]) {
   for (Index_t i = 0; i < numNode; ++i)
     nodeElemCount[i] = 0;
   for (Index_t i = 0; i < numElem; ++i) {
-    Index_t *nl = &nodelist[8 * i];
     for (Index_t j = 0; j < 8; ++j)
-      ++(nodeElemCount[nl[j]]);
+      ++(nodeElemCount[nodelist[i][j]]);
   }
   nodeElemStart = AllocateIndex(numNode + 1);
   nodeElemStart[0] = 0;
@@ -2539,9 +2723,8 @@ int main(int argc, char *argv[]) {
   for (Index_t i = 0; i < numNode; ++i)
     nodeElemCount[i] = 0;
   for (Index_t i = 0; i < numElem; ++i) {
-    Index_t *nl = &nodelist[8 * i];
     for (Index_t j = 0; j < 8; ++j) {
-      Index_t m = nl[j];
+      Index_t m = nodelist[i][j];
       Index_t k = i * 8 + j;
       Index_t offset = nodeElemStart[m] + nodeElemCount[m];
       nodeElemCornerList[offset] = k;
@@ -2617,9 +2800,8 @@ int main(int argc, char *argv[]) {
   // Initialize field data (volumes, masses)
   for (Index_t i = 0; i < numElem; ++i) {
     Real_t x_local[8], y_local[8], z_local[8];
-    Index_t *elemToNode = &nodelist[8 * i];
     for (Index_t lnode = 0; lnode < 8; ++lnode) {
-      Index_t gnode = elemToNode[lnode];
+      Index_t gnode = nodelist[i][lnode];
       x_local[lnode] = x[gnode];
       y_local[lnode] = y[gnode];
       z_local[lnode] = z[gnode];
@@ -2628,7 +2810,7 @@ int main(int argc, char *argv[]) {
     volo[i] = volume;
     elemMass[i] = volume;
     for (Index_t j = 0; j < 8; ++j) {
-      Index_t idx = elemToNode[j];
+      Index_t idx = nodelist[i][j];
       nodalMass[idx] += volume / 8.0;
     }
   }
@@ -2639,37 +2821,44 @@ int main(int argc, char *argv[]) {
   Real_t einit = ebase * scale * scale * scale;
   e[0] = einit;
   deltatime = (0.5 * cbrt(volo[0])) / sqrt(2.0 * einit);
+  DebugPrintInit(e, p, q, v, volo, nodalMass, x, y, z, nodelist);
 
   // Main timestep loop
   struct timeval start, end;
   gettimeofday(&start, NULL);
 
+  CARTS_KERNEL_TIMER_START("lulesh");
   while ((time_val < stoptime) && (cycle < opts.its)) {
     TimeIncrement(&deltatime, &time_val, &cycle, stoptime, dtfixed, dtcourant,
                   dthydro, deltatimemultlb, deltatimemultub, dtmax);
+    lulesh_debug_cycle = cycle;
 
     printf("iteration %d, delta time %f, energy %f\n", cycle, deltatime, e[0]);
 
-    LagrangeLeapFrog(x, y, z, xd, yd, zd, xdd, ydd, zdd, fx, fy, fz, nodalMass,
-                     e, p, q, qq, ql, ss, v, volo, delv, arealg, vdov, elemMass,
-                     nodelist, elemBC, lxim, lxip, letam, letap, lzetam, lzetap,
-                     nodeElemStart, nodeElemCornerList, regElemSize, symmX,
-                     symmY, symmZ, symmX_size, symmY_size, symmZ_size, numElem,
-                     numNode, numReg, sizeX, sizeY, sizeZ, cost, deltatime,
-                     c_hgcoef, c_u_cut, c_qstop, c_monoq_limiter_mult,
-                     c_monoq_max_slope, c_qlc_monoq, c_qqc_monoq, c_eosvmin,
-                     c_eosvmax, c_e_cut, c_p_cut, c_ss4o3, c_q_cut, c_v_cut,
-                     c_pmin, c_emin, c_refdens, c_qqc, c_dvovmax, &dtcourant,
-                     &dthydro);
+    LagrangeLeapFrog(
+        x, y, z, xd, yd, zd, xdd, ydd, zdd, fx, fy, fz, nodalMass, e, p, q, qq,
+        ql, ss, v, volo, delv, arealg, vdov, elemMass, nodelist, elemBC, lxim,
+        lxip, letam, letap, lzetam, lzetap, nodeElemStart, nodeElemCornerList,
+        regElemSize, symmX, symmY, symmZ, symmX_size, symmY_size, symmZ_size,
+        numElem, numNode, numReg, sizeX, sizeY, sizeZ, cost, deltatime,
+        c_hgcoef, c_u_cut, c_qstop, c_monoq_limiter_mult, c_monoq_max_slope,
+        c_qlc_monoq, c_qqc_monoq, c_eosvmin, c_eosvmax, c_e_cut, c_p_cut,
+        c_ss4o3, c_q_cut, c_v_cut, c_pmin, c_emin, c_refdens, c_qqc, c_dvovmax,
+        &dtcourant, &dthydro);
 
     if ((opts.showProg != 0) && (opts.quiet == 0)) {
       printf("cycle = %d, time = %e, dt=%e\n", cycle, time_val, deltatime);
     }
+    CARTS_KERNEL_TIMER_ACCUM("lulesh");
   }
 
   gettimeofday(&end, NULL);
   double elapsed_time = (double)(end.tv_sec - start.tv_sec) +
                         ((double)(end.tv_usec - start.tv_usec)) / 1000000;
+
+  CARTS_KERNEL_TIMER_PRINT("lulesh");
+  CARTS_E2E_TIMER_STOP();
+  CARTS_BENCHMARKS_STOP();
 
   // Output results
   Real_t grindTime1 =
@@ -2682,6 +2871,7 @@ int main(int argc, char *argv[]) {
   printf("   MPI tasks           =  %i \n", numRanks);
   printf("   Iteration count     =  %i \n", cycle);
   printf("   Final Origin Energy = %12.6e \n", e[0]);
+  printf("checksum: %.6e\n", e[0]);
 
   Real_t MaxAbsDiff = 0.0;
   Real_t TotalAbsDiff = 0.0;
@@ -2723,7 +2913,6 @@ int main(int argc, char *argv[]) {
   free(fy);
   free(fz);
   free(nodalMass);
-  free(nodelist);
   free(lxim);
   free(lxip);
   free(letam);
@@ -2748,10 +2937,10 @@ int main(int argc, char *argv[]) {
   free(symmX);
   free(symmY);
   free(symmZ);
-#if _OPENMP
   free(nodeElemStart);
   free(nodeElemCornerList);
-#endif
+
+  FreeIndex2D(nodelist, numElem);
 
   return 0;
 }
