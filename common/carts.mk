@@ -32,6 +32,7 @@ CFLAGS ?=
 # Output files
 ARTS_BINARY := $(EXAMPLE_NAME)_arts
 OMP_BINARY := $(BUILD_DIR)/$(EXAMPLE_NAME)_omp
+OMP_CFLAGS_STAMP := $(BUILD_DIR)/.omp_cflags
 
 # Auto-detect arts.cfg
 ARTS_CFG ?= $(firstword $(wildcard arts.cfg))
@@ -53,8 +54,19 @@ all: | $(BUILD_DIR) $(LOG_DIR)
 		> $(LOG_DIR)/build.log 2>&1 || (cat $(LOG_DIR)/build.log >&2; exit 1)
 	@echo "[$(EXAMPLE_NAME)] Built: $(ARTS_BINARY)"
 
+# Track OpenMP build flags to avoid stale binaries when size/CFLAGS change
+$(OMP_CFLAGS_STAMP): | $(BUILD_DIR)
+	@echo "$(OMP_FLAGS) $(LDFLAGS)" > $@.tmp
+	@{ \
+	  if [ ! -f "$@" ] || ! cmp -s "$@.tmp" "$@"; then \
+	    mv "$@.tmp" "$@"; \
+	  else \
+	    rm -f "$@.tmp"; \
+	  fi; \
+	}
+
 # Build OpenMP reference executable
-$(OMP_BINARY): $(SRC) | $(BUILD_DIR) $(LOG_DIR)
+$(OMP_BINARY): $(SRC) $(OMP_CFLAGS_STAMP) | $(BUILD_DIR) $(LOG_DIR)
 	@echo "[$(EXAMPLE_NAME)] Building OpenMP reference -> $@"
 	@$(CARTS) clang $(SRC) $(OMP_FLAGS) $(LDFLAGS) -o $@ \
 		2>&1 | tee $(LOG_DIR)/openmp.log; exit $${PIPESTATUS[0]}
