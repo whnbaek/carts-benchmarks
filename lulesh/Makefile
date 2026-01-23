@@ -7,9 +7,10 @@ TINY_CFLAGS ?=
 SMALL_CFLAGS ?=
 MEDIUM_CFLAGS ?=
 EXTRA_CFLAGS ?= -DCARTS_QSTOP=1.0e+30
+LDFLAGS ?= -lm
 
 # Runtime arguments for different sizes
-TINY_ARGS := -s 3 -i 10
+TINY_ARGS := -s 3 -i 5
 SMALL_ARGS := -s 10 -i 10
 MEDIUM_ARGS := -s 30 -i 500
 

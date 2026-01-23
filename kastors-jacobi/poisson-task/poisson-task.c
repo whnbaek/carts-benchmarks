@@ -14,6 +14,49 @@
 #include <stdlib.h>
 #include "arts/Utils/Benchmarks/CartsBenchmarks.h"
 
+#ifdef POISSON_DEBUG
+static double sum2d(int nx, int ny, double **a) {
+  double s = 0.0;
+  for (int i = 0; i < nx; i++) {
+    for (int j = 0; j < ny; j++) {
+      s += a[i][j];
+    }
+  }
+  return s;
+}
+
+static double boundary_sum(int nx, int ny, double **a) {
+  double s = 0.0;
+  for (int i = 0; i < nx; i++) {
+    s += a[i][0];
+    s += a[i][ny - 1];
+  }
+  for (int j = 1; j < ny - 1; j++) {
+    s += a[0][j];
+    s += a[nx - 1][j];
+  }
+  return s;
+}
+
+static double row_sum(int ny, double *row) {
+  double s = 0.0;
+  for (int j = 0; j < ny; j++) {
+    s += row[j];
+  }
+  return s;
+}
+
+static void checkpoint(const char *label, int nx, int ny, double **a) {
+  int mid = nx / 2;
+  int last = nx - 1;
+  printf("[ckpt] %s: sum=%.12e boundary=%.12e row0=%.12e rowMid=%.12e rowLast=%.12e\n",
+         label, sum2d(nx, ny, a), boundary_sum(nx, ny, a), row_sum(ny, a[0]),
+         row_sum(ny, a[mid]), row_sum(ny, a[last]));
+  printf("[ckpt] %s samples: a[0][0]=%.6e a[0][1]=%.6e a[mid][mid]=%.6e a[last][last]=%.6e\n",
+         label, a[0][0], a[0][1], a[mid][mid], a[last][last]);
+}
+#endif
+
 #ifndef SIZE
 #define SIZE 100
 #endif
@@ -118,6 +161,10 @@ int main(void) {
 
   printf("Poisson Task\n");
   printf("Grid: %d x %d, Iterations: %d\n", nx, ny, itnew);
+#ifdef POISSON_DEBUG
+  printf("[ckpt] params: nx=%d ny=%d dx=%.12e dy=%.12e BLOCK_SIZE=%d NITER=%d\n",
+         nx, ny, dx, dy, BLOCK_SIZE, NITER);
+#endif
 
   CARTS_E2E_TIMER_START("poisson-task");
 
@@ -146,6 +193,9 @@ int main(void) {
 
   // Set RHS
   rhs(nx, ny, f);
+#ifdef POISSON_DEBUG
+  checkpoint("rhs", nx, ny, f);
+#endif
 
   // Set initial estimate (boundary from f, interior = 0)
   for (int i = 0; i < nx; i++) {
@@ -155,6 +205,9 @@ int main(void) {
       }
     }
   }
+#ifdef POISSON_DEBUG
+  checkpoint("init_unew", nx, ny, unew);
+#endif
 
   printf("Running task-based sweep...\n");
   CARTS_KERNEL_TIMER_START("sweep");
@@ -162,6 +215,9 @@ int main(void) {
   CARTS_KERNEL_TIMER_STOP("sweep");
 
   CARTS_E2E_TIMER_STOP();
+#ifdef POISSON_DEBUG
+  checkpoint("task_unew", nx, ny, unew);
+#endif
 
   // Save result
   for (int i = 0; i < nx; i++) {
@@ -180,6 +236,9 @@ int main(void) {
 
   printf("Running sequential sweep...\n");
   sweep_seq(nx, ny, dx, dy, f, itold, itnew, u, unew);
+#ifdef POISSON_DEBUG
+  checkpoint("seq_unew", nx, ny, unew);
+#endif
 
   // Compare
   double error = 0.0;

@@ -24,6 +24,80 @@ verification succeeds).
 
 ---
 
+## Bug Fix: polygeist.subindex Not Traced in CreateDbs (Fixed)
+
+**Problem:** lulesh crashed with "EDT region uses external value that is not a
+block argument or dependency" during the CreateDbs pass.
+
+**Root Cause:** `ValueUtils::getUnderlyingValueImpl()` didn't handle
+`polygeist::SubIndexOp`. When CreateDbs tried to collect allocations used
+inside EDTs, it couldn't trace through `polygeist.subindex` operations to find
+the underlying `memref.alloc`. This caused allocations accessed via subindex
+to not be converted to datablocks.
+
+**Affected Pattern:** 2D array accesses like `fx_elem[k]` which generate:
+```mlir
+%alloc = memref.alloc(%size) : memref<?xf64>
+%subindex = polygeist.subindex %alloc[%k] : memref<?xf64> -> memref<?xf64>
+```
+
+**Fix:** Added handling for `polygeist::SubIndexOp` in `getUnderlyingValueImpl()`
+in `/opt/carts/lib/arts/Utils/ValueUtils.cpp`:
+```cpp
+else if (auto subindex = dyn_cast<polygeist::SubIndexOp>(op))
+  return getUnderlyingValueImpl(subindex.getSource(), visited, depth + 1);
+```
+
+**Comparison with mixed_access:** The `mixed_access` example worked because it
+has 0 `polygeist.subindex` ops - its array accesses don't generate this pattern.
+
+---
+
+## Bug: Local Alloca Inside Parallel Loop (Open)
+
+**Problem:** ARTS transformations fail with "EDT region uses external value that is not a block argument or dependency" for local stack arrays declared inside parallel loop bodies.
+
+**Error Message:**
+```
+error: 'memref.store' op EDT region uses external value '%255 = "memref.alloca"()
+... : () -> memref<3x8xf64>' that is not a block argument or dependency.
+```
+
+**Affected Pattern:**
+```c
+#pragma omp parallel for firstprivate(numElem)
+for (Index_t k = 0; k < numElem; ++k) {
+    Real_t B[3][8];      // <-- Local alloca (memref<3x8xf64>)
+    Real_t x_local[8];   // <-- Local alloca
+    Real_t y_local[8];   // <-- Local alloca
+    Real_t z_local[8];   // <-- Local alloca
+
+    CollectNodesToElemNodes(x, y, z, nodelist[k], x_local, y_local, z_local);
+    CalcElemShapeFunctionDerivatives(x_local, y_local, z_local, B, &determ[k]);
+    // ...
+}
+```
+
+**Root Cause:** When this parallel loop is converted to an EDT:
+1. The `memref.alloca` for `B[3][8]` is created outside the EDT region
+2. The EDT body tries to use this alloca
+3. CARTS validation fails because the alloca isn't passed as a block argument or dependency
+
+**Affected Locations:**
+- `lulesh.c:638` inside `IntegrateStressForElems()`
+- `lulesh.c:1431` (another `Real_t B[3][8]` inside a parallel loop)
+
+**Status:** Open - requires compiler fix in CreateDbs or EDT outlining pass.
+
+**Expected Fix:** The CARTS transformation should handle local allocas inside parallel loop bodies by either:
+1. **Cloning the alloca inside the EDT** - Each task gets its own private copy
+2. **Converting to thread-local storage** - Explicit privatization
+3. **Hoisting and passing as dependency** - Less efficient but correct
+
+**Workaround:** None currently available. The local arrays must be handled by the compiler.
+
+---
+
 1. **Navigate to the lulesh example directory:**
 
    ```bash
